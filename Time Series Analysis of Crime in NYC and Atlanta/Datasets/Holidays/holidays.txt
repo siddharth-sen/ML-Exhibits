@@ -1,0 +1,40 @@
+Federal Holidays
+https://www.opm.gov/faqs/QA.aspx?fid=e64d74ab-20a3-484c-8682-d2a2b46c22da&pid=c41e6beb-0c14-449d-bde5-355a3a3014cd
+
+    New Year's Day (January 1).
+    Birthday of Martin Luther King, Jr. (Third Monday in January).
+    Washington's Birthday/President's Day (Third Monday in February).
+    Memorial Day (Last Monday in May).
+    Independence Day (July 4).
+    Labor Day (First Monday in September).
+    Columbus Day (Second Monday in October).
+    Veterans Day (November 11).
+    Thanksgiving Day (Fourth Thursday in November).
+    Christmas Day (December 25).
+
+Additional Considerations
+https://jeremykun.com/2011/11/25/holidays-and-homicide/
+
+Valentine's Day (February 14)
+Halloween (October 31)
+St. Patrick's Day (March 17)
+
+FIXED
+
+    New Year's Eve (December 31)  X
+    New Year's Day (January 1)    X
+    Valentine's Day (February 14)  X
+    St. Patrick's Day (March 17)   X
+    Independence Day (July 4).    X
+    Halloween (October 31)	   X
+    Veterans Day (November 11).   X
+    Christmas Eve (December 24)    X 
+    Christmas Day (December 25).   X	
+
+VARIABLE
+    Birthday of Martin Luther King, Jr. (Third Monday in January)  X
+    Washington's Birthday/President's Day (Third Monday in February)  X
+    Memorial Day (Last Monday in May)     X
+    Labor Day (First Monday in September).  X
+    Columbus Day (Second Monday in October)  X
+    Thanksgiving Day (Fourth Thursday in November). X

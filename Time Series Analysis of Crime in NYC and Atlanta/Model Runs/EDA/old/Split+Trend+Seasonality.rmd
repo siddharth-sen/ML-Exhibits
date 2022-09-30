@@ -1,0 +1,347 @@
+---
+title: "TSA_CleanSplit"
+author: "Yash Veljee"
+date: "4/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyquant)
+library(dplyr)
+library(tidyr)
+library(mgcv)
+library(lubridate)
+library(tseries)
+library(TSA)
+library(dynlm)
+```
+
+##Data Cleaning and Split
+
+```{r}
+atl_data = read.csv("ISYE6203_Atlanta_Crime_2009-2022.csv")
+
+atl_property = atl_data %>%
+  filter(aggregated_crime %in% c("PROPERTY"))
+
+atl_property$occur_date <- as.Date(atl_property$occur_date, format="%m/%d/%Y")
+
+atl_prop_final <- data.frame(unclass(table(cut(atl_property$occur_date, 'day'))))
+
+names(atl_prop_final)[1] <- 'occurance_count'
+
+atl_violent = atl_data %>%
+  filter(aggregated_crime %in% c("VIOLENT"))
+
+atl_violent$occur_date <- as.Date(atl_violent$occur_date, format="%m/%d/%Y")
+
+atl_violent_final <- data.frame(unclass(table(cut(atl_violent$occur_date, 'day'))))
+
+names(atl_violent_final)[1] <- 'occurance_count'
+
+nyc_data = read.csv("ISYE6203_NYC_Crime_2006-2020.csv")
+
+nyc_property = nyc_data %>%
+  filter(aggregated_crime %in% c("PROPERTY"))
+
+nyc_property$occur_date <- as.Date(nyc_property$occur_date, format="%m/%d/%Y")
+
+nyc_prop_final <- data.frame(unclass(table(cut(nyc_property$occur_date, 'day'))))
+
+names(nyc_prop_final)[1] <- 'occurance_count'
+
+nyc_violent = nyc_data %>%
+  filter(aggregated_crime %in% c("VIOLENT"))
+
+nyc_violent$occur_date <- as.Date(nyc_violent$occur_date, format="%m/%d/%Y")
+
+nyc_violent_final <- data.frame(unclass(table(cut(nyc_violent$occur_date, 'day'))))
+
+names(nyc_violent_final)[1] <- 'occurance_count'
+
+nyc_QOL = nyc_data %>%
+  filter(aggregated_crime %in% c("QOL"))
+
+nyc_QOL$occur_date <- as.Date(nyc_QOL$occur_date, format="%m/%d/%Y")
+
+nyc_QOL_final <- data.frame(unclass(table(cut(nyc_QOL$occur_date, 'day'))))
+
+names(nyc_QOL_final)[1] <- 'occurance_count'
+
+write.csv(nyc_QOL_final,"nyc_QOL_final.csv", row.names = TRUE)
+write.csv(nyc_prop_final,"nyc_prop_final.csv", row.names = TRUE)
+write.csv(nyc_violent_final,"nyc_violent_final.csv", row.names = TRUE)
+write.csv(atl_prop_final,"atl_prop_final.csv", row.names = TRUE)
+write.csv(atl_violent_final,"atl_violent_final.csv", row.names = TRUE)
+```
+
+## ATL Crimes Trend and Seasonality by crime type
+
+```{r}
+atl_violent <- read.csv("atl_violent_final.csv", head = TRUE)
+names(atl_violent)[1] <- 'Date'
+atl_v <- ts(atl_violent$occurance_count, start = 2009, freq = 365)
+
+ts.plot(atl_v,ylab="Violent Crimes in ATL per day",main="ATL Violent Crimes")
+acf(atl_v,lag.max=365*6,main="ATL Violent Crimes")
+
+time.pts = c(1:length(atl_v))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+#Splines Trend Estimation
+gam.fit = gam(atl_v~s(time.pts))
+atl_v.fit.gam = ts(fitted(gam.fit),start=2009,frequency=365)
+
+##Is there a trend? 
+ts.plot(atl_v,ylab="ATL Violent Crimes")
+lines(atl_v.fit.gam,lwd=2,col="red")
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((atl_v - fitted(gam.fit)), start = 2009, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+
+acf(dif.fit.gam, lag.max = 365 * 6)
+
+## Estimate seasonality using ANOVA approach
+model1 = lm(dif.fit.gam~season(dif.fit.gam))
+summary(model1)
+## All seasonal mean effects (model without intercept)
+model2 = lm(dif.fit.gam~season(dif.fit.gam)-1)
+summary(model2)
+
+## Fit a parametric model for both trend and seasonality
+## Quadratic trend
+x1 = time.pts
+x2 = time.pts^2
+lm.fit = dynlm(atl_v~x1+x2+season(atl_v)-1)
+summary(lm.fit)
+lm.fit.new = dynlm(atl_v~x1+season(atl_v)-1)
+summary(lm.fit.new)
+
+anova(lm.fit, lm.fit.new)
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((atl_v - fitted(lm.fit)), start = 2009, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+acf(dif.fit.gam, lag.max = 365 * 6)
+
+#Diff data
+diff.crime = diff(atl_v, 365)
+ts.plot(diff.crime, ylab = "Differenced ATL Violence Crimes")
+acf(diff.crime, lag.max = 365 * 6)
+
+atl_prop <- read.csv("atl_prop_final.csv", head = TRUE)
+names(atl_prop)[1] <- 'Date'
+atl_p <- ts(atl_prop$occurance_count, start = 2009, freq = 365)
+
+ts.plot(atl_p,ylab="Property Crimes in ATL per day",main="ATL Property Crimes")
+acf(atl_p,lag.max=365*6,main="ATL Property Crimes")
+
+time.pts = c(1:length(atl_p))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+#Splines Trend Estimation
+gam.fit = gam(atl_p~s(time.pts))
+atl_p.fit.gam = ts(fitted(gam.fit),start=2009,frequency=365)
+
+##Is there a trend? 
+ts.plot(atl_p,ylab="ATL Property Crimes")
+lines(atl_p.fit.gam,lwd=2,col="red")
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((atl_p - fitted(gam.fit)), start = 2009, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+
+acf(dif.fit.gam, lag.max = 365 * 6)
+
+## Estimate seasonality using ANOVA approach
+model1 = lm(dif.fit.gam~season(dif.fit.gam))
+summary(model1)
+## All seasonal mean effects (model without intercept)
+model2 = lm(dif.fit.gam~season(dif.fit.gam)-1)
+summary(model2)
+
+## Fit a parametric model for both trend and seasonality
+## Quadratic trend
+x1 = time.pts
+x2 = time.pts^2
+lm.fit = dynlm(atl_p~x1+x2+season(atl_p)-1)
+summary(lm.fit)
+lm.fit.new = dynlm(atl_p~x1+season(atl_p)-1)
+summary(lm.fit.new)
+
+anova(lm.fit, lm.fit.new)
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((atl_p - fitted(lm.fit)), start = 2009, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+acf(dif.fit.gam, lag.max = 365 * 2)
+
+#Diff data
+diff.crime = diff(dif.fit.gam, 365)
+ts.plot(diff.crime, ylab = "Differenced ATL Property Crimes")
+acf(diff.crime, lag.max = 365 * 2)
+
+atl_prop1 = atl_prop %>%
+  filter(Date < 2013-01-01)
+atl_p1 <- ts(atl_prop1$occurance_count, start = 2009, freq = 365)
+
+ts.plot(atl_p1,ylab="Property Crimes in ATL per day",main="ATL Property Crimes")
+acf(atl_p,lag.max=365*4,main="ATL Property Crimes")
+```
+
+## NYC Crimes Trend and Seasonality by Crime
+
+```{r}
+nyc_violent <- read.csv("nyc_violent_final.csv", head = TRUE)
+names(nyc_violent)[1] <- 'Date'
+nyc_v <- ts(nyc_violent$occurance_count, start = 2006, freq = 365)
+
+ts.plot(nyc_v,ylab="Violent Crimes in NYC per day",main="NYC Violent Crimes")
+acf(nyc_v,lag.max=365*8,main="NYC Violent Crimes")
+
+time.pts = c(1:length(nyc_v))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+#Splines Trend Estimation
+gam.fit = gam(nyc_v~s(time.pts))
+nyc_v.fit.gam = ts(fitted(gam.fit),start=2006,frequency=365)
+
+##Is there a trend? 
+ts.plot(nyc_v,ylab="NYC Violent Crimes")
+lines(nyc_v.fit.gam,lwd=2,col="red")
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_v - fitted(gam.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+## Estimate seasonality using ANOVA approach
+model1 = lm(dif.fit.gam~season(dif.fit.gam))
+summary(model1)
+## All seasonal mean effects (model without intercept)
+model2 = lm(dif.fit.gam~season(dif.fit.gam)-1)
+summary(model2)
+
+## Fit a parametric model for both trend and seasonality
+## Quadratic trend
+x1 = time.pts
+x2 = time.pts^2
+lm.fit = dynlm(nyc_v~x1+x2+season(nyc_v)-1)
+summary(lm.fit)
+lm.fit.new = dynlm(nyc_v~x1+season(nyc_v)-1)
+summary(lm.fit.new)
+
+anova(lm.fit, lm.fit.new)
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_v - fitted(lm.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+#Diff data
+diff.crime = diff(nyc_v, 365)
+ts.plot(diff.crime, ylab = "Differenced NYC Violence Crimes")
+acf(diff.crime, lag.max = 365 * 8)
+
+nyc_prop <- read.csv("nyc_prop_final.csv", head = TRUE)
+names(nyc_prop)[1] <- 'Date'
+nyc_p <- ts(nyc_prop$occurance_count, start = 2006, freq = 365)
+
+ts.plot(nyc_p,ylab="Property Crimes in NYC per day",main="NYC Property Crimes")
+acf(nyc_p,lag.max=365*8,main="NYC Property Crimes")
+
+time.pts = c(1:length(nyc_p))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+#Splines Trend Estimation
+gam.fit = gam(nyc_p~s(time.pts))
+nyc_p.fit.gam = ts(fitted(gam.fit),start=2006,frequency=365)
+
+##Is there a trend? 
+ts.plot(nyc_p,ylab="NYC Property Crimes")
+lines(nyc_p.fit.gam,lwd=2,col="red")
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_p - fitted(gam.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+## Estimate seasonality using ANOVA approach
+model1 = lm(dif.fit.gam~season(dif.fit.gam))
+summary(model1)
+## All seasonal mean effects (model without intercept)
+model2 = lm(dif.fit.gam~season(dif.fit.gam)-1)
+summary(model2)
+
+## Fit a parametric model for both trend and seasonality
+## Quadratic trend
+x1 = time.pts
+x2 = time.pts^2
+lm.fit = dynlm(nyc_p~x1+x2+season(nyc_p)-1)
+summary(lm.fit)
+lm.fit.new = dynlm(nyc_p~x1+season(nyc_p)-1)
+summary(lm.fit.new)
+
+anova(lm.fit, lm.fit.new)
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_p - fitted(lm.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+#Diff data
+diff.crime = diff(dif.fit.gam, 365)
+ts.plot(diff.crime, ylab = "Differenced NYC Property Crimes")
+acf(diff.crime, lag.max = 365 * 8)
+
+nyc_qol <- read.csv("nyc_QOL_final.csv", head = TRUE)
+names(nyc_qol)[1] <- 'Date'
+nyc_q <- ts(nyc_qol$occurance_count, start = 2006, freq = 365)
+
+ts.plot(nyc_q,ylab="QOL Crimes in NYC per day",main="NYC QOL Crimes")
+acf(nyc_q,lag.max=365*8,main="NYC QOL Crimes")
+
+time.pts = c(1:length(nyc_q))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+#Splines Trend Estimation
+gam.fit = gam(nyc_q~s(time.pts))
+nyc_q.fit.gam = ts(fitted(gam.fit),start=2006,frequency=365)
+
+##Is there a trend? 
+ts.plot(nyc_q,ylab="NYC QOL Crimes")
+lines(nyc_q.fit.gam,lwd=2,col="red")
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_q - fitted(gam.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+## Estimate seasonality using ANOVA approach
+model1 = lm(dif.fit.gam~season(dif.fit.gam))
+summary(model1)
+## All seasonal mean effects (model without intercept)
+model2 = lm(dif.fit.gam~season(dif.fit.gam)-1)
+summary(model2)
+
+## Fit a parametric model for both trend and seasonality
+## Quadratic trend
+x1 = time.pts
+x2 = time.pts^2
+lm.fit = dynlm(nyc_q~x1+x2+season(nyc_q)-1)
+summary(lm.fit)
+lm.fit.new = dynlm(nyc_q~x1+season(nyc_q)-1)
+summary(lm.fit.new)
+
+anova(lm.fit, lm.fit.new)
+
+# Residuals Splines Smoothing
+dif.fit.gam = ts((nyc_q - fitted(lm.fit)), start = 2006, frequency = 365)
+ts.plot(dif.fit.gam, ylab = "Residuals Splines Smoothing")
+acf(dif.fit.gam, lag.max = 365 * 8)
+
+#Diff data
+diff.crime = diff(dif.fit.gam, 365)
+ts.plot(diff.crime, ylab = "Differenced NYC QOL Crimes")
+acf(diff.crime, lag.max = 365 * 8)
+```

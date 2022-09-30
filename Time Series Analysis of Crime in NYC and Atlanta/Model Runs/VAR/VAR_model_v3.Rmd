@@ -1,0 +1,382 @@
+---
+title: "VAR_Analysis"
+author: "Yash Veljee"
+date: '2022-04-21'
+output: html_document
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(vars)
+library(xts)
+library(mgcv)
+```
+
+```{r}
+atl_violent = read.csv("atl_violent_final_v2.csv")
+nyc_violent = read.csv("nyc_violent_final_v3.csv")
+atl_property = read.csv("atl_prop_final_v2.csv")
+nyc_property = read.csv("nyc_prop_final_v2.csv")
+```
+
+
+```{r}
+#ATL Violent Crimes
+atl_violent_crimes<-atl_violent[,2]
+datesatl_v<-as.Date(atl_violent[,1],"%m/%d/%Y")
+tsatl_v=xts(atl_violent_crimes,datesatl_v)
+
+dlatl_v<-diff(sqrt(tsatl_v+3/8))
+plot(tsatl_v,main='Atlanta Violent Crimes')
+
+#ATL Property Crimes
+atl_property_crimes<-atl_property[,2]
+datesatl_p<-as.Date(atl_property[,1],"%m/%d/%Y")
+tsatl_p=xts(atl_property_crimes,datesatl_p)
+dlatl_p<-diff(sqrt(tsatl_p+3/8))
+plot(tsatl_p,main='Atlanta Property Crimes')
+
+#NYC Violent Crimes
+nyc_violent_crimes<-nyc_violent[,2]
+datesnyc_v<-as.Date(nyc_violent[,1],"%m/%d/%Y")
+tsnyc_v=xts(nyc_violent_crimes,datesnyc_v)
+dlnyc_v<-diff(sqrt(tsnyc_v+3/8))
+plot(tsnyc_v,main='NYC Violent Crimes')
+
+#NYC Property Crimes
+nyc_property_crimes<-nyc_property[,2]
+datesnyc_p<-as.Date(nyc_property[,1],"%m/%d/%Y")
+tsnyc_p=xts(nyc_property_crimes,datesnyc_p)
+dlnyc_p<-diff(sqrt(tsnyc_p+3/8))
+plot(tsnyc_p,main='NYC Property Crimes')
+
+
+## ACF Analysis for both time series together
+#ts.merge <- merge(tsatl_p,tsatl_v, join='inner')
+#colnames(ts.merge)<-c("tsatl_p","tsatl_p")
+par(mfrow = c(1, 2))
+acf(dlatl_p[-c(1,500)])
+acf(dlatl_v[-c(1,500)])
+dl.merge <- merge(dlatl_p,dlatl_v, join='inner')
+colnames(dl.merge)<-c("dlatl_p","dlatl_v")
+acf(dl.merge[-c(1, 500)])
+```
+
+## ATLANTA
+
+```{r}
+atl_data_merged <- merge(atl_violent, atl_property, by.x='date', by.y='date', all.x = TRUE, all.y = TRUE)
+
+names(atl_data_merged)[1] <- "Date"
+atl_data_merged=atl_data_merged[order(as.Date(atl_data_merged$Date, format="%m/%d/%Y")),]
+names(atl_data_merged)[2] <- "ATL Violent Crimes"
+names(atl_data_merged)[3] <- "ATL Property Crimes"
+
+n = nrow(atl_data_merged)
+atl_data_merged.train=atl_data_merged[1:(n-877),]
+atl_data_merged.test=atl_data_merged[(n-876):n,]
+
+ts_atl_v=ts(atl_data_merged.train[,"ATL Violent Crimes"],start=2009, freq=1)
+ts_atl_p=ts(atl_data_merged.train[,"ATL Property Crimes"],start=2009, freq=1)
+
+transts_atl_v= sqrt(ts_atl_v+3/8)
+transts_atl_p= sqrt(ts_atl_p+3/8)
+
+ddata.train_atl=cbind(transts_atl_v,transts_atl_p)
+
+VARselect(ddata.train_atl, lag.max = 7)$selection
+
+model.var=VAR(ddata.train_atl, p=7)
+summary(model.var)
+
+```
+
+```{r}
+###ATLANTA
+atl.vc<-atl_violent[,2]
+datesatl.v<-as.Date(atl_violent[,1],"%m/%d/%Y")
+xts.atlv=xts(atl.vc,datesatl.v)
+
+atl.pc<-atl_property[,2]
+datesatl.p<-as.Date(atl_property[,1],"%m/%d/%Y")
+xts.atlp=xts(atl.pc,datesatl.p)
+
+trans.atlv <- sqrt(xts.atlv+3/8)
+trans.atlp <- sqrt(xts.atlp+3/8)
+
+transmerge.atl <- merge(trans.atlv, trans.atlp, join='inner')
+merge.atl <- merge(xts.atlv, xts.atlp, join='inner')
+
+plot(transmerge.atl, main="Transformed Atlanta")
+plot(merge.atl, main="Nontransformed Atlanta")
+```
+
+```{r}
+###GRANGER - ATLANTA CRIME CHECK
+library(aod)
+rownames(vcov(model.var))
+```
+```{r}
+###GRANGER - DOES ATLANTA PROPERTY LEAD ATLANTA VIOLENT
+coef.atl_v = coefficients(model.var)$transts_atl_v[-(7*2+1),1]
+var.model = vcov(model.var)[2:15,2:15]
+wald.test(b=coef.atl_v, var.model, Terms=c(2,4,6,8,10,12,14))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN ATLANTA PROPERTY CRIME INFLUENCES CHANGE IN ATLANTA VIOLENT 
+``` 
+```{r}
+###GRANGER - DOES ATLANTA VIOLENT LEAD ATLANTA PROPERTY
+coef.atl_p = coefficients(model.var)$transts_atl_p[-(7*2+1),1]
+var.model2 = vcov(model.var)[17:30,17:30]
+wald.test(b=coef.atl_p, var.model2, Terms=c(1,3,5,7,9,11,13))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN ATLANTA VIOLENT CRIME INFLUENCES CHANGE IN ATLANTA PROPERTY CRIME
+``` 
+```{r}
+###REFORECAST - ATLANTA
+n = nrow(merge.atl)
+data.train = merge.atl[1:(n-7),]
+data.test = merge.atl[(n-7+1):n,]
+
+n2 = length(xts.atlv)
+nfit = n2-7
+
+train.atl_v = xts.atlv[1:nfit]
+test.atl_v = xts.atlv[(nfit+1):n2]
+
+unrestr.fcst = NULL
+
+for(idx in 1:7){
+
+  nfit=n-(7-idx+1)
+  
+  unrestr.bic.pred = VAR(merge.atl[1:nfit],p=7)
+	
+	pred.unrestr=predict(unrestr.bic.pred,n.ahead=1)
+
+	unrestr.fcst=c(unrestr.fcst,pred.unrestr[[1]]$xts.atlv[,1])
+}
+
+###PLOTTING
+n_back = 18
+
+ymin = min(c(ts(xts.atlv[c(n2-n_back+1):n2]), unrestr.fcst))*0.95
+ymax = max(c(ts(xts.atlv[c(n2-n_back+1):n2]), unrestr.fcst))*1.05
+
+plot(xts.atlv[c(n2-n_back+1):n2], type="l", xlab="Time", ylab="Crime", main="Atlanta Violent Crime - VAR Prediction Rolling 1-day", ylim=c(ymin,ymax))
+
+points(xts(unrestr.fcst, time(test.atl_v)), col='red')
+
+```
+```{r}
+###ATLANTA REFORECAST - ACCURACY MEASURE
+
+#Mean Absolute Percentage Error (MAPE)
+mean(abs(unrestr.fcst - test.atl_v)/abs(test.atl_v))
+
+#Precision Measure (PM)
+sum((unrestr.fcst - test.atl_v)^2)/sum((test.atl_v-mean(test.atl_v))^2)
+
+```
+
+##NYC
+
+```{r}
+par(mfrow = c(1, 2))
+acf(dlnyc_p[-c(1,500)])
+acf(dlnyc_v[-c(1,500)])
+dl.merge <- merge(dlnyc_p,dlnyc_v, join='inner')
+colnames(dl.merge)<-c("dlnyc_p","dlnyc_v")
+acf(dl.merge[-c(1, 500)])
+
+nyc_data_merged <- merge(nyc_violent, nyc_property, by.x='date', by.y='date', all.x = TRUE, all.y = TRUE)
+
+names(nyc_data_merged)[1] <- "Date"
+nyc_data_merged=nyc_data_merged[order(as.Date(nyc_data_merged$Date, format="%m/%d/%Y")),]
+names(nyc_data_merged)[2] <- "NYC Violent Crimes"
+names(nyc_data_merged)[3] <- "NYC Property Crimes"
+
+n = nrow(nyc_data_merged)
+nyc_data_merged.train=nyc_data_merged[1:(n-877),]
+nyc_data_merged.test=nyc_data_merged[(n-876):n,]
+
+ts_nyc_v=ts(nyc_data_merged.train[,"NYC Violent Crimes"],start=2009, freq=1)
+ts_nyc_p=ts(nyc_data_merged.train[,"NYC Property Crimes"],start=2009, freq=1)
+
+transts_nyc_v= sqrt(ts_nyc_v+3/8)
+transts_nyc_p= sqrt(ts_nyc_p+3/8)
+
+ddata.train_nyc=cbind(transts_nyc_v,transts_nyc_p)
+
+VARselect(ddata.train_nyc, lag.max = 7)$selection
+
+model.var=VAR(ddata.train_nyc, p=7)
+summary(model.var)
+
+```
+
+```{r}
+###NYC
+nyc.vc<-nyc_violent[,2]
+datesnyc.v<-as.Date(nyc_violent[,1],"%m/%d/%Y")
+xts.nycv=xts(nyc.vc,datesnyc.v)
+
+nyc.pc<-nyc_property[,2]
+datesnyc.p<-as.Date(nyc_property[,1],"%m/%d/%Y")
+xts.nycp=xts(nyc.pc,datesnyc.p)
+
+trans.nycv <- sqrt(xts.nycv+3/8)
+trans.nycp <- sqrt(xts.nycp+3/8)
+
+transmerge.nyc <- merge(trans.nycv, trans.nycp, join='inner')
+merge.nyc <- merge(xts.nycv, xts.nycp, join='inner')
+
+plot(transmerge.nyc, main="Transformed NYC")
+plot(merge.nyc, main="Nontransformed NYC")
+```
+```{r}
+###GRANGER - NYC CRIME CHECK
+library(aod)
+rownames(vcov(model.var))
+
+```
+```{r}
+###GRANGER - DOES NYC PROPERTY LEAD NYC VIOLENT
+coef.nyc_v = coefficients(model.var)$transts_nyc_v[-(7*2+1),1]
+var.model = vcov(model.var)[2:15,2:15]
+wald.test(b=coef.nyc_v, var.model, Terms=c(2,4,6,8,10,12,14))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN NYC PROPERTY CRIME INFLUENCES CHANGE IN NYC VIOLENT 
+``` 
+```{r}
+###GRANGER - DOES NYC VIOLENT LEAD NYC PROPERTY
+coef.nyc_p = coefficients(model.var)$transts_nyc_p[-(7*2+1),1]
+var.model2 = vcov(model.var)[17:30,17:30]
+wald.test(b=coef.nyc_p, var.model2, Terms=c(1,3,5,7,9,11,13))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN NYC VIOLENT CRIME INFLUENCES CHANGE IN NYC PROPERTY CRIME
+``` 
+```{r}
+###REFORECAST - NYC
+n = nrow(merge.nyc)
+data.train = merge.nyc[1:(n-7),]
+data.test = merge.nyc[(n-7+1):n,]
+
+n2 = length(xts.nycv)
+nfit = n2-7
+
+train.nyc_v = xts.nycv[1:nfit]
+test.nyc_v = xts.nycv[(nfit+1):n2]
+
+unrestr.fcst = NULL
+
+for(idx in 1:7){
+
+  nfit=n-(7-idx+1)
+  
+  unrestr.bic.pred = VAR(merge.nyc[1:nfit],p=7)
+	
+	pred.unrestr=predict(unrestr.bic.pred,n.ahead=1)
+
+	unrestr.fcst=c(unrestr.fcst,pred.unrestr[[1]]$xts.nycv[,1])
+}
+
+###PLOTTING
+n_back = 18
+
+ymin = min(c(ts(xts.nycv[c(n2-n_back+1):n2]), unrestr.fcst))*0.95
+ymax = max(c(ts(xts.nycv[c(n2-n_back+1):n2]), unrestr.fcst))*1.05
+
+plot(xts.nycv[c(n2-n_back+1):n2], type="l", xlab="Time", ylab="Crime", main="NYC Violent Crime - VAR Prediction Rolling 1-day", ylim=c(ymin,ymax))
+
+points(xts(unrestr.fcst, time(test.nyc_v)), col='red')
+
+```
+```{r}
+###NYC REFORECAST - ACCURACY MEASURE
+
+#Mean Absolute Percentage Error (MAPE)
+mean(abs(unrestr.fcst - test.nyc_v)/abs(test.nyc_v))
+
+#Precision Measure (PM)
+sum((unrestr.fcst - test.nyc_v)^2)/sum((test.nyc_v-mean(test.nyc_v))^2)
+
+```
+
+##NYC-ATLANTA
+
+
+
+```{r}
+par(mfrow = c(1, 2))
+acf(dlatl_v[-c(1,500)])
+acf(dlnyc_v[-c(1,500)])
+dl.merge <- merge(dlatl_v,dlnyc_v, join='inner')
+colnames(dl.merge)<-c("dlatl_v","dlnyc_v")
+acf(dl.merge[-c(1, 500)])
+
+both_data_merged <- merge(nyc_violent, atl_violent, by.x='date', by.y='date', all.x = TRUE, all.y = TRUE)
+
+names(both_data_merged)[1] <- "Date"
+both_data_merged=both_data_merged[order(as.Date(both_data_merged$Date, format="%m/%d/%Y")),]
+names(both_data_merged)[2] <- "NYC Violent Crimes"
+names(both_data_merged)[3] <- "ATL Violent Crimes"
+
+n = nrow(both_data_merged)
+both_data_merged.train=both_data_merged[1:(n-877),]
+both_data_merged.test=both_data_merged[(n-876):n,]
+
+ts_nyc_v=ts(both_data_merged.train[,"NYC Violent Crimes"],start=2009, freq=1)
+ts_atl_v=ts(both_data_merged.train[,"ATL Violent Crimes"],start=2009, freq=1)
+
+transts_nyc_v= sqrt(ts_nyc_v+3/8)
+transts_atl_v= sqrt(ts_atl_v+3/8)
+
+ddata.train_both=cbind(transts_nyc_v,transts_atl_v)
+
+VARselect(ddata.train_both, lag.max = 7)$selection
+
+model.var=VAR(ddata.train_both, p=7)
+summary(model.var)
+
+```
+
+
+```{r}
+###ATLANTA-NYC
+transmerge.atlnyc <- merge(trans.atlv, trans.nycv, join='inner')
+merge.atlnyc <- merge(xts.atlv, xts.nycv, join='inner')
+
+plot(transmerge.atlnyc, main="Transformed Atlanta-NYC")
+plot(merge.atlnyc, main="Nontransformed Atlanta-NYC")
+```
+
+```{r}
+###GRANGER - ATLANTA-NYC CHECK
+library(aod)
+rownames(vcov(model.var))
+```
+```{r}
+###GRANGER - DOES ATLANTA VIOLENT LEAD NYC VIOLENT
+coef.nyc_v = coefficients(model.var)$transts_nyc_v[-(7*2+1),1]
+var.model = vcov(model.var)[2:15,2:15]
+wald.test(b=coef.nyc_v, var.model, Terms=c(2,4,6,8,10,12,14))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN ATLANTA VIOLENT CRIME INFLUENCES CHANGE IN NYC VIOLENT 
+```
+```{r}
+###GRANGER - DOES NYC VIOLENT LEAD ATLANTA VIOLENT
+coef.atl_v = coefficients(model.var)$transts_atl_v[-(7*2+1),1]
+var.model2 = vcov(model.var)[17:30,17:30]
+wald.test(b=coef.atl_v, var.model2, Terms=c(1,3,5,7,9,11,13))
+
+###SMALL P-VALUE DO NOT REJECT NULL HYPOTHESIS
+###CHANGE IN NYC VIOLENT CRIME INFLUENCES CHANGE IN ATLANTA VIOLENT CRIME
+``` 
+

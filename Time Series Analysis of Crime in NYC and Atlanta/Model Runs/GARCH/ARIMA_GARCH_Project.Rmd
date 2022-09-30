@@ -1,0 +1,900 @@
+---
+title: "ISYE 6402 Project"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include = FALSE}
+
+# Set up the default parameters
+# 1. The code block will be shown in the document
+# 2. set up figure display size
+# 3. turn off all the warnings and messages
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width = 8, fig.height = 4)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+```
+
+##Uploading the Libraries
+
+```{r}
+## Libraries used within this homework are uploaded here
+library(zoo)
+library(xts)
+library(lubridate)
+library(mgcv)
+library(lmtest)
+library(dplyr)
+library(rugarch,warn.conflicts=FALSE)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(TSA)
+
+```
+
+##Data Cleaning
+
+```{r}
+#importing the data
+atlanta_prop <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/atl_prop_final.csv", head = TRUE)
+atlanta_violent <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/atl_violent_final.csv", head = TRUE)
+nyc_prop <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/nyc_prop_final.csv", head = TRUE)
+nyc_violent <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/nyc_violent_final.csv", head = TRUE)
+
+#cleaning the data
+
+#dates to date format
+# weeklydata$Date<-as.Date(weeklydata$Date,format='%m/%d/%Y')
+atlanta_prop$Date<-as.Date(atlanta_prop$Date,format='%m/%d/%Y')
+atlanta_violent$Date<-as.Date(atlanta_violent$Date,format='%m/%d/%Y')
+nyc_prop$Date<-as.Date(nyc_prop$Date,format='%m/%d/%Y')
+nyc_violent$Date<-as.Date(nyc_violent$Date,format='%m/%d/%Y')
+
+atlanta_prop <- atlanta_prop %>% filter(Date > '2009/01/01' & Date < '2021/01/01')
+atlanta_violent <- atlanta_violent %>% filter(Date > '2009/01/01' & Date < '2021/01/01')
+nyc_prop <- nyc_prop %>% filter(Date > '2009/01/01' & Date < '2021/01/01')
+nyc_violent <- nyc_violent %>% filter(Date > '2009/01/01' & Date < '2021/01/01')
+
+atlanta_prop$crime.count <- sqrt(atlanta_prop$crime.count+3/8)
+atlanta_violent$crime.count <- sqrt(atlanta_violent$crime.count+3/8)
+nyc_prop$crime.count <- sqrt(nyc_prop$crime.count+3/8)
+nyc_violent$crime.count <- sqrt(nyc_violent$crime.count+3/8)
+
+```
+
+##Applying TS & Creating Training & Testing Datasets
+
+```{r}
+
+#timeseries format
+atlanta_prop_ts <- ts(atlanta_prop$crime.count,start=c(2009,1,1),freq=365.25)
+atlanta_violent_ts <- ts(atlanta_violent$crime.count,start=c(2009,1,1),freq=365.25)
+nyc_prop_ts <- ts(nyc_prop$crime.count,start=c(2009,1,1),freq=365.25)
+nyc_violent_ts <- ts(nyc_violent$crime.count,start=c(2009,1,1),freq=365.25)
+
+#Dividing Data into Training and Test data sets:
+n_forward = 7
+n = length(atlanta_prop_ts)
+nfit = n-n_forward
+
+#Training & Testing atlanta property crime
+train_ap = atlanta_prop_ts[c(1:(nfit))]
+test_ap = atlanta_prop_ts[c((nfit+1):n)]
+
+#Training & Testing atlanta violent crime
+train_av = atlanta_violent_ts[c(1:(nfit))]
+test_av = atlanta_violent_ts[c((nfit+1):n)]
+
+#Training & Testing atlanta property crime
+train_np = nyc_prop_ts[c(1:(nfit))]
+test_np = nyc_prop_ts[c((nfit+1):n)]
+
+#Training & Testing atlanta property crime
+train_nv = nyc_violent_ts[c(1:(nfit))]
+test_nv = nyc_violent_ts[c((nfit+1):n)]
+
+```
+
+#Fitting ARIMA+GARCH Model for atlanta property crime:
+
+```{r}
+
+# Function to train ARIMA (p, d, q) Model
+test_modelA <- function(ts, p, d, q) {
+  mod = arima(ts, order = c(p, d, q), method = "ML")
+  current.aic = AIC(mod)
+  df = data.frame(p, d, q, current.aic)
+  names(df) <- c("p","d","q","AIC")
+  # print(paste(p,d,q,current.aic,sep=" "))
+  return(df)
+}
+
+# Daily TS ARIMA (p, d, q) Fitting
+ap.orders = data.frame(Inf, Inf, Inf, Inf)
+names(ap.orders) <- c("p", "d", "q", "AIC")
+
+for (p in 0:6) {
+  for (d in 0:2) {
+    for (q in 0:6) {
+      possibleError <- tryCatch(
+        ap.orders <- rbind(ap.orders, test_modelA(train_ap,p,d,q)),
+        error = function(e) {e}
+      )
+      if (inherits(possibleError, "error"))
+        next
+    }
+  }
+}
+
+ap.orders <- ap.orders[order(-ap.orders$AIC), ]
+ap.ord <- ap.orders[nrow(ap.orders), ]
+ap.orders[(nrow(ap.orders)-3):nrow(ap.orders), ]
+
+print(paste0("Initial ARIMA orders: ", ap.ord$p, ", ", ap.ord$d, ", ", ap.ord$q))
+
+#Fitting Initial Garch Model
+Initial_Garch_ap <- function(m,n){
+    spec_ap = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(ap.ord$p, ap.ord$d, ap.ord$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_ap, train_ap, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+initial_garch_orders_ap = data.frame(Inf,Inf,Inf)
+names(initial_garch_orders_ap) <- c("m","n","BIC")
+
+for (m in 0:4){
+    for (n in 0:4){
+        possibleError <- tryCatch(
+            initial_garch_orders_ap<-rbind(initial_garch_orders_ap,Initial_Garch_ap(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+initial_garch_orders_ap <- initial_garch_orders_ap[order(-initial_garch_orders_ap$BIC),]
+initial_garch_ord_ap <- initial_garch_orders_ap[nrow(initial_garch_orders_ap), ]
+initial_garch_orders_ap[(nrow(initial_garch_orders_ap)-3):nrow(initial_garch_orders_ap), ]
+
+print(paste0("Initial GARCH orders: ", initial_garch_ord_ap$m, ", ", initial_garch_ord_ap$n))
+
+#ARIMA update
+ARIMA_update_model_ap <- function(p, d, q){
+    spec_ap = ugarchspec(variance.model=list(garchOrder=c(initial_garch_ord_ap$m, initial_garch_ord_ap$n)),
+                      mean.model=list(arimaOrder=c(p, d, q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_ap, train_ap, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(p,d,q,current.bic)
+    names(df) <- c("p", "d", "q","BIC")
+    print(paste(p,d,q,current.bic,sep=" "))
+    return(df)
+}
+
+updated_arima_orders_ap = data.frame(Inf,Inf,Inf,Inf)
+names(updated_arima_orders_ap) <- c("p", "d", "q","BIC")
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:3){
+        possibleError <- tryCatch(
+            updated_arima_orders_ap<-rbind(updated_arima_orders_ap,ARIMA_update_model_ap(p, d, q)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+  }
+}
+
+updated_arima_orders_ap <- updated_arima_orders_ap[order(-updated_arima_orders_ap$BIC),]
+updated_arima_ord_ap <- updated_arima_orders_ap[nrow(updated_arima_orders_ap), ]
+updated_arima_orders_ap[(nrow(updated_arima_orders_ap)-3):nrow(updated_arima_orders_ap), ]
+
+print(paste0("Updated ARIMA: ", updated_arima_ord_ap$p, ", ", updated_arima_ord_ap$d, ", ", updated_arima_ord_ap$q))
+
+#GARCH update
+GARCH_update_model_ap <- function(m,n){
+    spec_ap = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(updated_arima_ord_ap$p, updated_arima_ord_ap$d, updated_arima_ord_ap$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_ap, train_ap, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+updated_garch_orders_ap = data.frame(Inf,Inf,Inf)
+names(updated_garch_orders_ap) <- c("m","n","BIC")
+
+for (m in 0:3){
+    for (n in 0:3){
+        possibleError <- tryCatch(
+            updated_garch_orders_ap<-rbind(updated_garch_orders_ap,GARCH_update_model_ap(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+updated_garch_orders_ap <- updated_garch_orders_ap[order(-updated_garch_orders_ap$BIC),]
+updated_garch_ord_ap <- updated_garch_orders_ap[nrow(updated_garch_orders_ap), ]
+updated_garch_orders_ap[(nrow(updated_garch_orders_ap)-3):nrow(updated_garch_orders_ap), ]
+
+print(paste0("Final ARIMA (", updated_arima_ord_ap$p, ", ", updated_arima_ord_ap$d, ", ", updated_arima_ord_ap$q, ") + GARCH (", updated_garch_ord_ap$m, ", ", updated_garch_ord_ap$n, ") chosen as the most efficient model"))
+
+# Final ARIMA+GARCH:
+spec_ap = ugarchspec(variance.model=list(garchOrder=c(updated_garch_ord_ap$m, updated_garch_ord_ap$n)),
+                 mean.model=list(arimaOrder=c(updated_arima_ord_ap$p, updated_arima_ord_ap$d, updated_arima_ord_ap$q),
+                 include.mean=T), distribution.model="std")
+final_training_ap = ugarchfit(spec_ap, train_ap, solver = 'hybrid')
+
+```
+
+#Fitting ARIMA+GARCH Model for atlanta violent crime:
+
+```{r}
+
+# Daily TS ARIMA (p, d, q) Fitting
+av.orders = data.frame(Inf, Inf, Inf, Inf)
+names(av.orders) <- c("p", "d", "q", "AIC")
+
+for (p in 0:6) {
+  for (d in 0:2) {
+    for (q in 0:6) {
+      possibleError <- tryCatch(
+        av.orders <- rbind(av.orders, test_modelA(train_av,p,d,q)),
+        error = function(e) {e}
+      )
+      if (inherits(possibleError, "error"))
+        next
+    }
+  }
+}
+
+av.orders <- av.orders[order(-av.orders$AIC), ]
+av.ord <- av.orders[nrow(av.orders), ]
+av.orders[(nrow(av.orders)-3):nrow(av.orders), ]
+
+print(paste0("Initial ARIMA orders: ", av.ord$p, ", ", av.ord$d, ", ", av.ord$q))
+
+#Fitting Initial Garch Model
+Initial_Garch_av <- function(m,n){
+    spec_av = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(av.ord$p, av.ord$d, av.ord$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_av, train_av, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+initial_garch_orders_av = data.frame(Inf,Inf,Inf)
+names(initial_garch_orders_av) <- c("m","n","BIC")
+
+for (m in 0:4){
+    for (n in 0:4){
+        possibleError <- tryCatch(
+            initial_garch_orders_av<-rbind(initial_garch_orders_av,Initial_Garch_av(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+initial_garch_orders_av <- initial_garch_orders_av[order(-initial_garch_orders_av$BIC),]
+initial_garch_ord_av <- initial_garch_orders_av[nrow(initial_garch_orders_av), ]
+initial_garch_orders_av[(nrow(initial_garch_orders_av)-3):nrow(initial_garch_orders_av), ]
+
+print(paste0("Initial GARCH orders: ", initial_garch_ord_av$m, ", ", initial_garch_ord_av$n))
+
+#ARIMA update
+ARIMA_update_model_av <- function(p, d, q){
+    spec_av = ugarchspec(variance.model=list(garchOrder=c(initial_garch_ord_av$m, initial_garch_ord_av$n)),
+                      mean.model=list(arimaOrder=c(p, d, q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_av, train_av, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(p,d,q,current.bic)
+    names(df) <- c("p", "d", "q","BIC")
+    print(paste(p,d,q,current.bic,sep=" "))
+    return(df)
+}
+
+updated_arima_orders_av = data.frame(Inf,Inf,Inf,Inf)
+names(updated_arima_orders_av) <- c("p", "d", "q","BIC")
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:3){
+        possibleError <- tryCatch(
+            updated_arima_orders_av<-rbind(updated_arima_orders_av,ARIMA_update_model_av(p, d, q)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+  }
+}
+
+updated_arima_orders_av <- updated_arima_orders_av[order(-updated_arima_orders_av$BIC),]
+updated_arima_ord_av <- updated_arima_orders_av[nrow(updated_arima_orders_av), ]
+updated_arima_orders_av[(nrow(updated_arima_orders_av)-3):nrow(updated_arima_orders_av), ]
+
+print(paste0("Updated ARIMA: ", updated_arima_ord_av$p, ", ", updated_arima_ord_av$d, ", ", updated_arima_ord_av$q))
+
+#GARCH update
+GARCH_update_model_av <- function(m,n){
+    spec_av = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(updated_arima_ord_av$p, updated_arima_ord_av$d, updated_arima_ord_av$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_av, train_av, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+updated_garch_orders_av = data.frame(Inf,Inf,Inf)
+names(updated_garch_orders_av) <- c("m","n","BIC")
+
+for (m in 0:3){
+    for (n in 0:3){
+        possibleError <- tryCatch(
+            updated_garch_orders_av<-rbind(updated_garch_orders_av,GARCH_update_model_av(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+updated_garch_orders_av <- updated_garch_orders_av[order(-updated_garch_orders_av$BIC),]
+updated_garch_ord_av <- updated_garch_orders_av[nrow(updated_garch_orders_av), ]
+updated_garch_orders_av[(nrow(updated_garch_orders_av)-3):nrow(updated_garch_orders_av), ]
+
+print(paste0("Final ARIMA (", updated_arima_ord_av$p, ", ", updated_arima_ord_av$d, ", ", updated_arima_ord_av$q, ") + GARCH (", updated_garch_ord_av$m, ", ", updated_garch_ord_av$n, ") chosen as the most efficient model"))
+
+# Final ARIMA+GARCH:
+spec_av = ugarchspec(variance.model=list(garchOrder=c(updated_garch_ord_av$m,updated_garch_ord_av$n)),
+                 mean.model=list(arimaOrder=c(updated_arima_ord_av$p,updated_arima_ord_av$d,updated_arima_ord_av$q),
+                 include.mean=T), distribution.model="std")
+final_training_av = ugarchfit(spec_av, train_av, solver = 'hybrid')
+
+```
+
+#Fitting ARIMA+GARCH Model for NYC property crime:
+
+```{r}
+
+# Daily TS ARIMA (p, d, q) Fitting
+np.orders = data.frame(Inf, Inf, Inf, Inf)
+names(np.orders) <- c("p", "d", "q", "AIC")
+
+for (p in 0:6) {
+  for (d in 0:2) {
+    for (q in 0:6) {
+      possibleError <- tryCatch(
+        np.orders <- rbind(np.orders, test_modelA(train_np,p,d,q)),
+        error = function(e) {e}
+      )
+      if (inherits(possibleError, "error"))
+        next
+    }
+  }
+}
+
+np.orders <- np.orders[order(-np.orders$AIC), ]
+np.ord <- np.orders[nrow(np.orders), ]
+np.orders[(nrow(np.orders)-3):nrow(np.orders), ]
+
+print(paste0("Initial ARIMA orders: ", np.ord$p, ", ", np.ord$d, ", ", np.ord$q))
+
+#Fitting Initial Garch Model
+Initial_Garch_np <- function(m,n){
+    spec_np = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(np.ord$p, np.ord$d, np.ord$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_np, train_np, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+initial_garch_orders_np = data.frame(Inf,Inf,Inf)
+names(initial_garch_orders_np) <- c("m","n","BIC")
+
+for (m in 0:4){
+    for (n in 0:4){
+        possibleError <- tryCatch(
+            initial_garch_orders_np<-rbind(initial_garch_orders_np,Initial_Garch_np(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+initial_garch_orders_np <- initial_garch_orders_np[order(-initial_garch_orders_np$BIC),]
+initial_garch_ord_np <- initial_garch_orders_np[nrow(initial_garch_orders_np), ]
+initial_garch_orders_np[(nrow(initial_garch_orders_np)-3):nrow(initial_garch_orders_np), ]
+
+print(paste0("Initial GARCH orders: ", initial_garch_ord_np$m, ", ", initial_garch_ord_np$n))
+
+#ARIMA update
+ARIMA_update_model_np <- function(p, d, q){
+    spec_np = ugarchspec(variance.model=list(garchOrder=c(initial_garch_ord_np$m, initial_garch_ord_np$n)),
+                      mean.model=list(arimaOrder=c(p, d, q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_np, train_np, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(p,d,q,current.bic)
+    names(df) <- c("p", "d", "q","BIC")
+    print(paste(p,d,q,current.bic,sep=" "))
+    return(df)
+}
+
+updated_arima_orders_np = data.frame(Inf,Inf,Inf,Inf)
+names(updated_arima_orders_np) <- c("p", "d", "q","BIC")
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:3){
+        possibleError <- tryCatch(
+            updated_arima_orders_np<-rbind(updated_arima_orders_np,ARIMA_update_model_np(p, d, q)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+  }
+}
+
+updated_arima_orders_np <- updated_arima_orders_np[order(-updated_arima_orders_np$BIC),]
+updated_arima_ord_np <- updated_arima_orders_np[nrow(updated_arima_orders_np), ]
+updated_arima_orders_np[(nrow(updated_arima_orders_np)-3):nrow(updated_arima_orders_np), ]
+
+print(paste0("Updated ARIMA: ", updated_arima_ord_np$p, ", ", updated_arima_ord_np$d, ", ", updated_arima_ord_np$q))
+
+#GARCH update
+GARCH_update_model_np <- function(m,n){
+    spec_np = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(updated_arima_ord_np$p, updated_arima_ord_np$d, updated_arima_ord_np$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_np, train_np, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+updated_garch_orders_np = data.frame(Inf,Inf,Inf)
+names(updated_garch_orders_np) <- c("m","n","BIC")
+
+for (m in 0:3){
+    for (n in 0:3){
+        possibleError <- tryCatch(
+            updated_garch_orders_np<-rbind(updated_garch_orders_np,GARCH_update_model_np(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+updated_garch_orders_np <- updated_garch_orders_np[order(-updated_garch_orders_np$BIC),]
+updated_garch_ord_np <- updated_garch_orders_np[nrow(updated_garch_orders_np), ]
+updated_garch_orders_np[(nrow(updated_garch_orders_np)-3):nrow(updated_garch_orders_np), ]
+
+print(paste0("Final ARIMA (", updated_arima_ord_np$p, ", ", updated_arima_ord_np$d, ", ", updated_arima_ord_np$q, ") + GARCH (", updated_garch_ord_np$m, ", ", updated_garch_ord_np$n, ") chosen as the most efficient model"))
+
+# Final ARIMA+GARCH:
+spec_np = ugarchspec(variance.model=list(garchOrder=c(updated_garch_ord_np$m,updated_garch_ord_np$n)),
+                 mean.model=list(arimaOrder=c(updated_arima_ord_np$p,updated_arima_ord_np$d,updated_arima_ord_np$q),
+                 include.mean=T), distribution.model="std")
+final_training_np = ugarchfit(spec_np, train_np, solver = 'hybrid')
+
+```
+
+#Fitting ARIMA+GARCH Model for NYC violent crime:
+
+```{r}
+
+# Daily TS ARIMA (p, d, q) Fitting
+nv.orders = data.frame(Inf, Inf, Inf, Inf)
+names(nv.orders) <- c("p", "d", "q", "AIC")
+
+for (p in 0:6) {
+  for (d in 0:2) {
+    for (q in 0:6) {
+      possibleError <- tryCatch(
+        nv.orders <- rbind(nv.orders, test_modelA(train_nv,p,d,q)),
+        error = function(e) {e}
+      )
+      if (inherits(possibleError, "error"))
+        next
+    }
+  }
+}
+
+nv.orders <- nv.orders[order(-nv.orders$AIC), ]
+nv.ord <- nv.orders[nrow(nv.orders), ]
+nv.orders[(nrow(nv.orders)-3):nrow(nv.orders), ]
+
+print(paste0("Initial ARIMA orders: ", nv.ord$p, ", ", nv.ord$d, ", ", nv.ord$q))
+
+#Fitting Initial Garch Model
+Initial_Garch_nv <- function(m,n){
+    spec_nv = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(nv.ord$p, nv.ord$d, nv.ord$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_nv, train_nv, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+initial_garch_orders_nv = data.frame(Inf,Inf,Inf)
+names(initial_garch_orders_nv) <- c("m","n","BIC")
+
+for (m in 0:4){
+    for (n in 0:4){
+        possibleError <- tryCatch(
+            initial_garch_orders_nv<-rbind(initial_garch_orders_nv,Initial_Garch_nv(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+initial_garch_orders_nv <- initial_garch_orders_nv[order(-initial_garch_orders_nv$BIC),]
+initial_garch_ord_nv <- initial_garch_orders_nv[nrow(initial_garch_orders_nv), ]
+initial_garch_orders_nv[(nrow(initial_garch_orders_nv)-3):nrow(initial_garch_orders_nv), ]
+
+print(paste0("Initial GARCH orders: ", initial_garch_ord_nv$m, ", ", initial_garch_ord_nv$n))
+
+#ARIMA update
+ARIMA_update_model_nv <- function(p, d, q){
+    spec_nv = ugarchspec(variance.model=list(garchOrder=c(initial_garch_ord_nv$m, initial_garch_ord_nv$n)),
+                      mean.model=list(arimaOrder=c(p, d, q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_nv, train_nv, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(p,d,q,current.bic)
+    names(df) <- c("p", "d", "q","BIC")
+    print(paste(p,d,q,current.bic,sep=" "))
+    return(df)
+}
+
+updated_arima_orders_nv = data.frame(Inf,Inf,Inf,Inf)
+names(updated_arima_orders_nv) <- c("p", "d", "q","BIC")
+
+for (p in 0:3) {
+  for (d in 0:1) {
+    for (q in 0:1){
+        possibleError <- tryCatch(
+            updated_arima_orders_nv<-rbind(updated_arima_orders_nv,ARIMA_update_model_nv(p, d, q)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+  }
+}
+
+updated_arima_orders_nv <- updated_arima_orders_nv[order(-updated_arima_orders_nv$BIC),]
+updated_arima_ord_nv <- updated_arima_orders_nv[nrow(updated_arima_orders_nv), ]
+updated_arima_orders_nv[(nrow(updated_arima_orders_nv)-3):nrow(updated_arima_orders_nv), ]
+
+print(paste0("Updated ARIMA: ", updated_arima_ord_nv$p, ", ", updated_arima_ord_nv$d, ", ", updated_arima_ord_nv$q))
+
+#GARCH update
+GARCH_update_model_nv <- function(m,n){
+    spec_nv = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+                      mean.model=list(arimaOrder=c(updated_arima_ord_nv$p, updated_arima_ord_nv$d, updated_arima_ord_nv$q),
+                                      include.mean=T),
+                      distribution.model="std")
+    fit = ugarchfit(spec_nv, train_nv, solver = 'hybrid')
+    current.bic = infocriteria(fit)[2]
+    df = data.frame(m,n,current.bic)
+    names(df) <- c("m","n","BIC")
+    print(paste(m,n,current.bic,sep=" "))
+    return(df)
+}
+
+updated_garch_orders_nv = data.frame(Inf,Inf,Inf)
+names(updated_garch_orders_nv) <- c("m","n","BIC")
+
+for (m in 0:3){
+    for (n in 0:3){
+        possibleError <- tryCatch(
+            updated_garch_orders_nv<-rbind(updated_garch_orders_nv,GARCH_update_model_nv(m,n)),
+            error=function(e) e
+        )
+        if(inherits(possibleError, "error")) next
+    }
+}
+
+updated_garch_orders_nv <- updated_garch_orders_nv[order(-updated_garch_orders_nv$BIC),]
+updated_garch_ord_nv <- updated_garch_orders_nv[nrow(updated_garch_orders_nv), ]
+updated_garch_orders_nv[(nrow(updated_garch_orders_nv)-3):nrow(updated_garch_orders_nv), ]
+
+print(paste0("Final ARIMA (", updated_arima_ord_nv$p, ", ", updated_arima_ord_nv$d, ", ", updated_arima_ord_nv$q, ") + GARCH (", updated_garch_ord_nv$m, ", ", updated_garch_ord_nv$n, ") chosen as the most efficient model"))
+
+# Final ARIMA+GARCH:
+spec_nv = ugarchspec(variance.model=list(garchOrder=c(updated_garch_ord_nv$m,updated_garch_ord_nv$n)),
+                 mean.model=list(arimaOrder=c(updated_arima_ord_nv$p,updated_arima_ord_nv$d,updated_arima_ord_nv$q),
+                 include.mean=T), distribution.model="std")
+final_training_nv = ugarchfit(spec_nv, train_nv, solver = 'hybrid')
+
+```
+
+#Residuals & Squared Residuals of all ARIMA-GARCH Models:
+
+```{r}
+
+#Atlanta property crime:
+resids_ap <- residuals(final_training_ap)[-1]
+squared_resids_ap <- resids_ap^2
+
+par(mfrow=c(2,2))
+acf(resids_ap,main="ACF: Atlanta Property Crime Residuals")
+pacf(resids_ap,main="PACF: Atlanta Property Crime Residuals")
+hist(resids_ap,xlab='Residuals',main='Histogram: Atlanta Property Crime Residuals')
+qqnorm(resids_ap,ylab="Sample Q",xlab="Atlanta Property Crime for Theoretical Q")
+qqline(resids_ap)
+
+par(mfrow=c(2,2))
+acf(squared_resids_ap,main="ACF: Atlanta Property Crime Squared Residuals")
+pacf(squared_resids_ap,main="PACF: Atlanta Property Crime Squared Residuals")
+hist(squared_resids_ap,xlab='Residuals',main='Histogram: Atlanta Property Crime Squared Residuals')
+qqnorm(squared_resids_ap,ylab="Sample Q",xlab="Atlanta Property Crime for Theoretical Q")
+qqline(squared_resids_ap)
+
+#Atlanta violent crime:
+resids_av <- residuals(final_training_av)[-1]
+squared_resids_av <- resids_av^2
+
+par(mfrow=c(2,2))
+acf(resids_av,main="ACF: Atlanta Violent Crime Residuals")
+pacf(resids_av,main="PACF: Atlanta Violent Crime Residuals")
+hist(resids_av,xlab='Residuals',main='Histogram: Atlanta Violent Crime Residuals')
+qqnorm(resids_av,ylab="Sample Q",xlab="Atlanta Violent Crime for Theoretical Q")
+qqline(resids_av)
+
+par(mfrow=c(2,2))
+acf(squared_resids_av,main="ACF: Atlanta Violent Crime Squared Residuals")
+pacf(squared_resids_av,main="PACF: Atlanta Violent Crime Squared Residuals")
+hist(squared_resids_av,xlab='Residuals',main='Histogram: Atlanta Violent Crime Squared Residuals')
+qqnorm(squared_resids_av,ylab="Sample Q",xlab="Atlanta Violent Crime for Theoretical Q")
+qqline(squared_resids_av)
+
+#NYC property crime:
+resids_np <- residuals(final_training_np)[-1]
+squared_resids_np <- resids_np^2
+
+par(mfrow=c(2,2))
+acf(resids_ap,main="ACF: NYC Property Crime Residuals")
+pacf(resids_ap,main="PACF: NYC Property Crime Residuals")
+hist(resids_ap,xlab='Residuals',main='Histogram: NYC Property Crime Residuals')
+qqnorm(resids_ap,ylab="Sample Q",xlab="NYC Property Crime for Theoretical Q")
+qqline(resids_ap)
+
+par(mfrow=c(2,2))
+acf(squared_resids_ap,main="ACF: NYC Property Crime Squared Residuals")
+pacf(squared_resids_ap,main="PACF: NYC Property Crime Squared Residuals")
+hist(squared_resids_ap,xlab='Residuals',main='Histogram: NYC Property Crime Squared Residuals')
+qqnorm(squared_resids_ap,ylab="Sample Q",xlab="NYC Property Crime for Theoretical Q")
+qqline(squared_resids_ap)
+
+#NYC violent crime:
+resids_nv <- residuals(final_training_nv)[-1]
+squared_resids_nv <- resids_nv^2
+
+par(mfrow=c(2,2))
+acf(resids_nv,main="ACF: NYC Violent Crime Residuals")
+pacf(resids_nv,main="PACF: NYC Violent Crime Residuals")
+hist(resids_nv,xlab='Residuals',main='Histogram: NYC Violent Crime Residuals')
+qqnorm(resids_nv,ylab="Sample Q",xlab="NYC Violent Crime for Theoretical Q")
+qqline(resids_nv)
+
+par(mfrow=c(2,2))
+acf(squared_resids_nv,main="ACF: NYC Violent Crime Squared Residuals")
+pacf(squared_resids_nv,main="PACF: NYC Violent Crime Squared Residuals")
+hist(squared_resids_nv,xlab='Residuals',main='Histogram: NYC Violent Crime Squared Residuals')
+qqnorm(squared_resids_nv,ylab="Sample Q",xlab="NYC Violent Crime for Theoretical Q")
+qqline(squared_resids_nv)
+
+```
+
+#Running Mean & Variance Forecasts for Atlanta Property Crime:
+
+```{r}
+
+ap.fore.series = NULL
+ap.fore.sigma = NULL
+
+n_forward = 7
+n = length(atlanta_prop_ts)
+nfit = n-n_forward
+
+for(f in 1: length(test_ap)){
+    ## Fit models
+    data = train_ap
+    if(f>2)
+       data = c(train_ap,test_ap[1:(f-1)])
+    final_training_ap = ugarchfit(spec_ap, data, solver = 'hybrid')
+    ## Forecast
+    fore = ugarchforecast(final_training_ap, n.ahead=1)
+    ap.fore.series = c(ap.fore.series, fore@forecast$seriesFor)
+    ap.fore.sigma = c(ap.fore.sigma, fore@forecast$sigmaFor)
+}
+
+x <- atlanta_prop$Date[(n-19):n]
+x2 <- atlanta_prop$Date[(n-6):n]
+y <- atlanta_prop_ts[(n-19):n]
+
+plot(x, y, type="l", xlab="Date", ylab="Crime/Day" , main = "Atlanta Property Crime Mean Forecast")
+points(x2, ap.fore.series, lwd= 2, start = min(x2), type = "o",col="blue")
+
+plot(x, y^2, type="l", xlab="Date", ylab="Crime/Day" , main = "Atlanta Property Crime Variance Forecast")
+points(x2, ap.fore.sigma^2, lwd= 2, start = min(x2), type = "o", col="red")
+
+```
+
+#Running Mean & Variance Forecasts for Atlanta Violent Crime:
+
+```{r}
+
+av.fore.series = NULL
+av.fore.sigma = NULL
+
+for(f in 1: length(test_av)){
+    ## Fit models
+    data = train_av
+    if(f>2)
+       data = c(train_av,test_av[1:(f-1)])
+    final_training_av = ugarchfit(spec_av, data, solver = 'hybrid')
+    ## Forecast
+    fore = ugarchforecast(final_training_av, n.ahead=1)
+    av.fore.series = c(av.fore.series, fore@forecast$seriesFor)
+    av.fore.sigma = c(av.fore.sigma, fore@forecast$sigmaFor)
+}
+
+x <- atlanta_violent$Date[(n-19):n]
+x2 <- atlanta_violent$Date[(n-6):n]
+y <- atlanta_violent_ts[(n-19):n]
+
+plot(x, y, type="l", xlab="Date", ylab="Crime/Day" , main = "Atlanta Violent Crime Mean Forecast")
+points(x2, av.fore.series, lwd= 2, start = min(x2), type = "o",col="blue")
+
+plot(x, y^2, type="l", xlab="Date", ylab="Crime/Day" , main = "Atlanta Violent Crime Variance Forecast")
+points(x2, av.fore.sigma^2, lwd= 2, start = min(x2), type = "o", col="red")
+
+```
+
+#Running Mean & Variance Forecasts for NYC Property Crime:
+
+```{r}
+
+np.fore.series = NULL
+np.fore.sigma = NULL
+
+for(f in 1: length(test_np)){
+    ## Fit models
+    data = train_np
+    if(f>2)
+       data = c(train_np,test_np[1:(f-1)])
+    final_training_np = ugarchfit(spec_np, data, solver = 'hybrid')
+    ## Forecast
+    fore = ugarchforecast(final_training_np, n.ahead=1)
+    np.fore.series = c(np.fore.series, fore@forecast$seriesFor)
+    np.fore.sigma = c(np.fore.sigma, fore@forecast$sigmaFor)
+}
+
+x <- nyc_prop$Date[(n-19):n]
+x2 <- nyc_prop$Date[(n-6):n]
+y <- nyc_prop_ts[(n-19):n]
+
+plot(x, y, type="l", xlab="Date", ylab="Crime/Day" , main = "NYC Property Crime Mean Forecast")
+points(x2, np.fore.series, lwd= 2, start = min(x2), type = "o",col="blue")
+
+plot(x, y^2, type="l", xlab="Date", ylab="Crime/Day" , main = "NYC Property Crime Variance Forecast")
+points(x2, np.fore.sigma^2, lwd= 2, start = min(x2), type = "o", col="red")
+```
+
+#Running Mean & Variance Forecasts for NYC Violent Crime:
+
+```{r}
+
+nv.fore.series = NULL
+nv.fore.sigma = NULL
+
+for(f in 1: length(test_nv)){
+    ## Fit models
+    data = train_nv
+    if(f>2)
+       data = c(train_nv,test_nv[1:(f-1)])
+    final_training_nv = ugarchfit(spec_nv, data, solver = 'hybrid')
+    ## Forecast
+    fore = ugarchforecast(final_training_nv, n.ahead=1)
+    nv.fore.series = c(nv.fore.series, fore@forecast$seriesFor)
+    nv.fore.sigma = c(nv.fore.sigma, fore@forecast$sigmaFor)
+}
+
+x <- nyc_violent$Date[(n-19):n]
+x2 <- nyc_violent$Date[(n-6):n]
+y <- nyc_violent_ts[(n-19):n]
+
+plot(x, y, type="l", xlab="Date", ylab="Crime/Day" , main = "NYC Violent Crime Mean Forecast")
+points(x2, nv.fore.series, lwd= 2, start = min(x2), type = "o",col="blue")
+
+plot(x, y^2, type="l", xlab="Date", ylab="Crime/Day" , main = "NYC Violent Crime Variance Forecast")
+points(x2, nv.fore.sigma^2, lwd= 2, start = min(x2), type = "o", col="red")
+
+```
+
+#Accuracy Measure Calculations for all Mean Forecasts:
+
+```{r}
+
+#
+mape <- function(y, y_pred) {
+  mape <- mean(abs((y-y_pred)/y))
+  return(mape)}
+
+pm <- function(obs, pred){
+  pm <- sum((pred-obs)^2)/sum((obs-mean(obs))^2)
+  return(pm)}
+
+atl.p.mape_mean <- mape(test_ap, ap.fore.series)
+atl.v.mape_mean <- mape(test_av, av.fore.series)
+atl.p.pm_mean <- pm(test_ap, ap.fore.series)
+atl.v.pm_mean <- pm(test_av, av.fore.series)
+NYC.p.mape_mean <- mape(test_np, np.fore.series)
+NYC.v.mape_mean <- mape(test_nv, nv.fore.series)
+NYC.p.pm_mean <- pm(test_np, np.fore.series)
+NYC.v.pm_mean <- pm(test_nv, nv.fore.series)
+
+atl.p.mape_sigma <- mape(test_ap, ap.fore.series)
+atl.v.mape_sigma <- mape(test_av, av.fore.series)
+atl.p.pm_sigma <- pm(test_ap, ap.fore.series)
+atl.v.pm_sigma <- pm(test_av, av.fore.series)
+NYC.p.mape_sigma <- mape(test_np, np.fore.series)
+NYC.v.mape_sigma <- mape(test_nv, nv.fore.series)
+NYC.p.pm_sigma <- pm(test_np, np.fore.series)
+NYC.v.pm_sigma <- pm(test_nv, nv.fore.series)
+
+cat("ATL Violent:\n\nMean:\nMAPE =", atl.v.mape_mean, "\nPM =", atl.v.pm_mean,
+"\n\nSigma:\nMAPE =", atl.v.mape_sigma, "\nPM =", atl.v.pm_sigma,
+"\n\nATL Property:\n\nMean:\nMAPE =", atl.p.mape_mean, "\nPM =", atl.p.pm_mean,
+"\n\nSigma:\nMAPE =", atl.p.mape_sigma, "\nPM =", atl.p.pm_sigma,
+"\n\nNYC Violent:\n\nMean:\nMAPE =", NYC.v.mape_mean, "\nPM =", NYC.v.pm_mean,
+"\n\nSigma:\nMAPE =", NYC.v.mape_sigma, "\nPM =", NYC.v.pm_sigma,
+"\n\nNYC Property:\n\nMean:\nMAPE =", NYC.p.mape_mean, "\nPM =", NYC.p.pm_mean,
+"\n\nSigma:\nMAPE =", NYC.p.mape_sigma, "\nPM =", NYC.p.pm_sigma)
+
+```

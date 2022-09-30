@@ -1,0 +1,830 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyquant)
+library(dplyr)
+library(tidyr)
+library(mgcv)
+library(lubridate)
+library(tseries)
+library(TSA)
+library(dynlm)
+library(dplyr)
+```
+
+```{r}
+###Import File
+atl_violent <- read.csv("atl_violent_final_v2.csv", head = TRUE)
+names(atl_violent)[1] <- 'Date'
+atl_v <- ts(atl_violent$occurance_count, start = 2009, freq = 365)
+
+atl_prop <- read.csv("atl_prop_final_v2.csv", head = TRUE)
+names(atl_prop)[1] <- 'Date'
+atl_p <- ts(atl_prop$occurance_count, start = 2009, freq = 365)
+
+nyc_violent <- read.csv("nyc_violent_final_v3.csv", head = TRUE)
+names(nyc_violent)[1] <- 'Date'
+nyc_v <- ts(nyc_violent$occurance_count, start = 2009, freq = 365)
+
+nyc_prop <- read.csv("nyc_prop_final_v2.csv", head = TRUE)
+names(nyc_prop)[1] <- 'Date'
+nyc_p <- ts(nyc_prop$occurance_count, start = 2009, freq = 365)
+
+joined_df <- merge(atl_prop, atl_violent, by.x = "Date", by.y = "Date", all.x = TRUE, all.y = TRUE)
+names(joined_df)[2]="Atlanta Property Crimes"
+names(joined_df)[3]="Atlanta Violent Crimes"
+
+joined_df <- merge(joined_df, nyc_violent, by.x = "Date", by.y = "Date", all.x = TRUE, all.y = TRUE)
+names(joined_df)[4]="NYC Violent Crimes"
+
+joined_df <- merge(joined_df, nyc_prop, by.x = "Date", by.y = "Date", all.x = TRUE, all.y = TRUE)
+names(joined_df)[5]="NYC Property Crimes"
+
+joined_df=joined_df[order(as.Date(joined_df$Date, format="%m/%d/%Y")),]
+
+cor(joined_df[, c('Atlanta Property Crimes', 'Atlanta Violent Crimes', 'NYC Violent Crimes', 'NYC Property Crimes')])
+```
+
+```{r}
+###HISTOGRAMS - DISTRIBUTION COMPARISON
+atl_violent.tr = sqrt(atl_violent$occurance_count+3/8)
+atl_v.tr <- ts(atl_violent.tr, start = 2009, freq = 365)
+
+atl_prop.tr = sqrt(atl_prop$occurance_count+3/8)
+atl_p.tr <- ts(atl_prop.tr, start = 2009, freq = 365)
+
+nyc_violent.tr = sqrt(nyc_violent$occurance_count+3/8)
+nyc_v.tr <- ts(nyc_violent.tr, start = 2009, freq = 365)
+
+nyc_prop.tr = sqrt(nyc_prop$occurance_count+3/8)
+nyc_p.tr <- ts(nyc_prop.tr, start = 2009, freq = 365)
+
+hist(atl_violent$occurance_count,nclass=20,xlab="Crime Volume", main="ATL Violent Crime Volume",col="brown")
+hist(atl_violent.tr,nclass=20,xlab="Crime Volume", main="Transformed ATL Violent Crime Volume", col="blue")
+
+hist(atl_prop$occurance_count,nclass=20,xlab="Crime Volume", main="ATL Property Crime Volume",col="brown")
+hist(atl_prop.tr,nclass=20,xlab="Crime Volume", main="Transformed ATL Property Crime Volume", col="blue")
+
+hist(nyc_violent$occurance_count,nclass=20,xlab="Crime Volume", main="NYC Violent Crime Volume",col="brown")
+hist(nyc_violent.tr,nclass=20,xlab="Crime Volume", main="Transformed NYC Violent Crime Volume", col="blue")
+
+hist(nyc_prop$occurance_count,nclass=20,xlab="Crime Volume", main="NYC Property Crime Volume",col="brown")
+hist(nyc_prop.tr,nclass=20,xlab="Crime Volume", main="Transformed NYC Property Crime Volume", col="blue")
+```
+
+## ATL Violent Crime
+```{r}
+###EDA - Time Series / ACF
+ts.plot(atl_v,ylab="Number of Crimes",main="ATL Violent Crimes - Daily")
+acf(atl_v,lag.max=365*4,main="ATL Violent Crimes - ACF")
+
+ts.plot(atl_v.tr,ylab="Number of Crimes",main="Trans ATL Violent Crimes - Daily")
+acf(atl_v.tr,lag.max=365*4,main="Trans ATL Violent Crimes - ACF")
+```
+
+```{r}
+###TREND ESTIMATION - SPLINES
+# Convert X-Axis to 0-1 Scale
+time.pts = c(1:length(atl_v.tr))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+
+#Splines Trend Estimation
+gam.fit = gam(atl_v.tr~s(time.pts))
+atl_v.tr.fit.gam = ts(fitted(gam.fit),start=2009,frequency=365)
+
+##Is there a trend? 
+ts.plot(atl_v.tr,ylab="Number of Crimes", main = "ATL Violent Crimes - Splines")
+grid()
+lines(atl_v.tr.fit.gam,lwd=2,col="red")
+```
+
+```{r}
+# Splines Residuals + Residuals ACF
+dif.fit.gam = atl_v.tr - atl_v.tr.fit.gam
+ts.plot(dif.fit.gam, ylab = "Residuals", main = "ATL Violent Crimes - Splines Residuals")
+abline(h=0, col='red')
+acf(dif.fit.gam, lag.max = 365 * 4, main = "ATL Violent Crimes - Splines Residuals - ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - ANOVA
+## Estimate seasonality using ANOVA approach
+model.anova = dynlm(atl_v.tr~season(atl_v.tr))
+#summary(model.anova)
+
+## Plot
+ts.plot(atl_v.tr,ylab="Number of Crimes", main = "ATL Violent Crimes - ANOVA Seasonality")
+grid()
+lines(fitted(model.anova),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality ANOVA- Residuals + Resid ACF
+resid.anova <- residuals(model.anova)
+
+ts.plot(resid.anova, xlab = "", ylab = "Residual Process", main = "ATL Violent Crimes - ANOVA")
+abline(h=0, col='red')
+acf(resid.anova, lag.max = 365 * 4, main = "ATL Violent Crimes - ANOVA ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - HARMONIC
+###SUMMARY
+harmonic.1 = dynlm(atl_v.tr~harmon(atl_v.tr))
+summary(harmonic.1)
+
+harmonic.2 = dynlm(atl_v.tr~harmon(atl_v.tr,2))
+summary(harmonic.2)
+###not all 2 harmonic values statistically significant - step down to simpler model
+```
+
+```{r}
+###Harmonic Plot
+## Plot
+ts.plot(atl_v.tr,ylab="Number of Crimes", main = "ATL Violent Crimes - Harmonic Seasonality")
+grid()
+lines(fitted(harmonic.1),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality Harmonic - Residuals + Resid ACF
+resid.harmonic <- residuals(harmonic.1)
+ts.plot(resid.harmonic, xlab = "", ylab = "Residual Process", main = "ATL Violent Crimes - Harmonic")
+abline(h=0, col='red')
+acf(resid.harmonic, lag.max = 365 * 4, main = "ATL Violent Crimes - Harmonic ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + WEEKLY SEASONALITY - TRANSFORMED
+atl_violent$Date <- as.Date(atl_violent$Date)
+year <- as.factor(format(atl_violent$Date,'%Y'))
+month <- as.factor(format(atl_violent$Date, '%b'))
+week <- as.factor(weekdays(atl_violent$Date))
+
+gam.fit.seastr = gam(atl_v.tr~s(time.pts)+week-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(atl_v.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "ATL Violent Crime - Splines + Weekly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "ATL Violent Crime - Splines + Weekly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY SEASONALITY - TRANSFORMED
+atl_violent$Date <- as.Date(atl_violent$Date)
+year <- as.factor(format(atl_violent$Date,'%Y'))
+month <- as.factor(format(atl_violent$Date, '%b'))
+week <- as.factor(weekdays(atl_violent$Date))
+
+gam.fit.seastr = gam(atl_v.tr~s(time.pts)+month-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(atl_v.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "ATL Violent Crime - Splines + Monthly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "ATL Violent Crime - Splines + Monthly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY + WEEKLY SEASONALITY
+atl_violent$Date <- as.Date(atl_violent$Date)
+year <- as.factor(format(atl_violent$Date,'%Y'))
+month <- as.factor(format(atl_violent$Date, '%b'))
+week <- as.factor(weekdays(atl_violent$Date))
+
+gam.fit.seastr.1 = gam(atl_v.tr~s(time.pts)+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(atl_v.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "ATL Violent Crime - Splines + Monthly + weekly")
+abline(h=0, col='red')
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "ATL Violent Crime - Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + QUARTERLY + MONTHLY + WEEKLY SEASONALITY
+atl_violent$Date <- as.Date(atl_violent$Date)
+year <- as.factor(format(atl_violent$Date,'%Y'))
+month <- as.factor(format(atl_violent$Date, '%b'))
+week <- as.factor(weekdays(atl_violent$Date))
+quarterly <- as.factor(quarter(atl_violent$Date))
+
+gam.fit.seastr.1 = gam(atl_v.tr~s(time.pts)+quarterly+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(atl_v.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "ATL Violent Crime - Quarterly + Splines + Monthly + weekly")
+abline(h=0, col='red')
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "ATL Violent Crime - Quarterly + Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 1 - TRANSFORMED
+diff.atl_v.tr = diff(atl_v.tr)
+ts.plot(diff.atl_v.tr, ylab = "Differenced Data", main = "ATL Violent Crimes - Differenced Order 1")
+abline(h=0, col='red')
+acf(diff.atl_v.tr, xlim=c(0.3,4), lag.max = 365 * 4, main = "ATL Violent Crimes - Differenced Order 1 ACF")
+### SEE HW2 - Q2 FOR EXPLANATION
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 2 - TRANSFORMED
+diff.atl_v.tr = diff(atl_v.tr, differences = 2)
+ts.plot(diff.atl_v.tr, ylab = "Differenced Data", main = "ATL Violent Crimes - Differenced Order 2")
+abline(h=0, col='red')
+acf(diff.atl_v.tr, xlim=c(0.2,4), lag.max = 365 * 4, main = "ATL Violent Crimes - Differenced Order 2 ACF")
+### SEE HW2 - Q2 FOR EXPLANATION
+```
+
+```{r}
+###DIFFERENCED DATA - TRANSFORMED - LAG 7
+diff.atl_v.tr = diff(atl_v.tr, 7)
+ts.plot(diff.atl_v.tr, ylab = "Differenced Data", main = "ATL Violent Crimes - SqRt Differenced Lag 7")
+abline(h=0, col='red')
+acf(diff.atl_v.tr, xlim=c(0.2,4),lag.max = 365 * 5, main = "ATL Violent Crimes - SqRt Differenced Lag 7 ACF")
+```
+
+## ATL Property Crime
+```{r}
+###EDA - Time Series / ACF
+ts.plot(atl_p,ylab="Number of Crimes",main="ATL Property Crimes - Daily")
+acf(atl_p,lag.max=365*4,main="ATL Property Crimes - ACF")
+
+ts.plot(atl_p.tr,ylab="Number of Crimes",main="Trans ATL Prop Crimes - Daily")
+acf(atl_p.tr,lag.max=365*4,main="Trans ATL Prop Crimes - ACF")
+```
+
+```{r}
+###TREND ESTIMATION - SPLINES
+# Convert X-Axis to 0-1 Scale
+time.pts = c(1:length(atl_p.tr))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+
+#Splines Trend Estimation
+gam.fit.3 = gam(atl_p.tr~s(time.pts))
+atl_p.fit.gam = ts(fitted(gam.fit.3),start=2009,frequency=365)
+
+##Is there a trend? 
+ts.plot(atl_p.tr,ylab="Number of Crimes", main = "ATL Property Crimes - Splines")
+grid()
+lines(atl_p.fit.gam,lwd=2,col="red")
+```
+```{r}
+plot(atl_p.fit.gam, type = "l", col = "red", xlab = "Year", ylab = "Number of Crimes", ylim=c(2.5,10.5))
+lines(atl_v.tr.fit.gam, col = "blue", type = "l")
+legend("topright", legend=c("ATL Property Spline", "ATL Violent Spline"),
+       col=c("red", "blue"), lty=c(1, 1), lwd=2)
+```
+
+```{r}
+# Splines Residuals + Residuals ACF
+
+dif.fit.gam4 = atl_p.tr - atl_p.fit.gam
+ts.plot(dif.fit.gam4, ylab = "Residuals", main = "ATL Property Crimes - Splines Residuals")
+abline(h=0, col='red')
+acf(dif.fit.gam4, lag.max = 365 * 4, main = "ATL Property Crimes - Splines Residuals - ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - ANOVA
+
+## Estimate seasonality using ANOVA approach
+model.anova2 = dynlm(atl_p.tr~season(atl_p.tr))
+#summary(model.anova)
+
+##Plot
+ts.plot(atl_p.tr,ylab="Number of Crimes", main = "ATL Property Crimes - ANOVA Seasonality")
+grid()
+lines(fitted(model.anova2),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality ANOVA- Residuals + Resid ACF
+resid.anova2 <- residuals(model.anova2)
+
+ts.plot(resid.anova2, xlab = "", ylab = "Residual Process", main = "ATL Property Crimes - ANOVA")
+abline(h=0, col='red')
+acf(resid.anova2, lag.max = 365 * 4, main = "ATL Property Crimes - ANOVA ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - HARMONIC
+###SUMMARY
+harmonic.3 = dynlm(atl_p.tr~harmon(atl_p.tr))
+summary(harmonic.3)
+
+harmonic.4 = dynlm(atl_p.tr~harmon(atl_p.tr,2))
+summary(harmonic.4)
+
+###all 4 harmonic values statistically significant - use more complex model
+```
+
+```{r}
+###Harmonic Plot
+## Plot
+ts.plot(atl_p.tr,ylab="Number of Crimes", main = "ATL Property Crimes - Harmonic Seasonality")
+grid()
+lines(fitted(harmonic.4),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality Harmonic - Residuals + Resid ACF
+
+resid.harmonic4 <- residuals(harmonic.4)
+
+ts.plot(resid.harmonic4, xlab = "", ylab = "Residual Process", main = "ATL Property Crimes - Harmonic")
+abline(h=0, col='red')
+acf(resid.harmonic4, lag.max = 365 * 4, main = "ATL Property Crimes - Harmonic ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + WEEKLY SEASONALITY - TRANSFORMED
+atl_prop$Date <- as.Date(atl_prop$Date)
+year <- as.factor(format(atl_prop$Date,'%Y'))
+month <- as.factor(format(atl_prop$Date, '%b'))
+week <- as.factor(weekdays(atl_prop$Date))
+
+gam.fit.seastr = gam(atl_p.tr~s(time.pts)+week-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(atl_p.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "ATL Prop Crime - Splines + Weekly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "ATL Prop Crime - Splines + Weekly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY SEASONALITY
+atl_prop$Date <- as.Date(atl_prop$Date)
+year <- as.factor(format(atl_prop$Date,'%Y'))
+month <- as.factor(format(atl_prop$Date, '%b'))
+week <- as.factor(weekdays(atl_prop$Date))
+
+gam.fit.seastr = gam(atl_p.tr~s(time.pts)+month-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(atl_p.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "ATL Property Crime - Splines + Monthly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "ATL Property Crime - Splines + Monthly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY + WEEKLY SEASONALITY
+atl_prop$Date <- as.Date(atl_prop$Date)
+year <- as.factor(format(atl_prop$Date,'%Y'))
+month <- as.factor(format(atl_prop$Date, '%b'))
+week <- as.factor(weekdays(atl_prop$Date))
+
+gam.fit.seastr.1 = gam(atl_p.tr~s(time.pts)+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(atl_p.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "ATL Property Crime - Splines + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "ATL Property Crime - Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + QUARTERLY + MONTHLY + WEEKLY SEASONALITY
+atl_prop$Date <- as.Date(atl_prop$Date)
+year <- as.factor(format(atl_prop$Date,'%Y'))
+month <- as.factor(format(atl_prop$Date, '%b'))
+week <- as.factor(weekdays(atl_prop$Date))
+quarterly <- as.factor(quarter(atl_prop$Date))
+
+gam.fit.seastr.1 = gam(atl_p.tr~s(time.pts)+quarterly+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(atl_p.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "ATL Property Crime - Splines + Quarterly + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "ATL Property Crime - Quarterly + Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 1
+diff.atl_p.tr = diff(atl_p.tr)
+ts.plot(diff.atl_p.tr, ylab = "Differenced Data", main = "ATL Property Crimes - Differenced Order 1")
+abline(h=0, col='red')
+acf(diff.atl_p.tr, lag.max = 365 * 4, main = "ATL Property Crimes - Differenced Order 1 ACF")
+
+### SEE HW2 - Q2 FOR EXPLANATION
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 2
+diff.atl_p3 = diff(atl_p.tr, differences = 2)
+ts.plot(diff.atl_p3, ylab = "Differenced Data", main = "ATL Property Crimes - Differenced Order 2")
+abline(h=0, col='red')
+acf(diff.atl_p3, lag.max = 365 * 4, main = "ATL Property Crimes - Differenced Order 2 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 7
+diff.atl_p3 = diff(atl_p.tr, differences = 7)
+ts.plot(diff.atl_p3, ylab = "Differenced Data", main = "ATL Property Crimes - Differenced Order 7")
+abline(h=0, col='red')
+acf(diff.atl_p3, xlim=c(0.2,4), lag.max = 365 * 4, main = "ATL Property Crimes - Differenced Order 7 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - LAG 365
+diff.atl_p2 = diff(atl_p.tr, lag = 7)
+ts.plot(diff.atl_p2, ylab = "Residuals", main = "ATL Property Crimes - Differenced Lag 7")
+abline(h=0, col='red')
+acf(diff.atl_p2, xlim=c(0.2,4), lag.max = 365 * 4, main = "ATL Property Crimes - Differenced Lag 7")
+```
+
+## NYC Violent Crime
+```{r}
+###EDA - Time Series / ACF
+ts.plot(nyc_v,ylab="Number of Crimes",main="NYC Violent Crimes - Daily")
+acf(nyc_v,lag.max=365*4,main="NYC Violent Crimes - ACF")
+
+ts.plot(nyc_v.tr,ylab="Number of Crimes",main="Trans NYC Violent Crimes - Daily")
+acf(nyc_v.tr,lag.max=365*4,main="Trans NYC Violent Crimes - ACF")
+```
+
+```{r}
+###TREND ESTIMATION - SPLINES
+# Convert X-Axis to 0-1 Scale
+time.pts = c(1:length(nyc_v.tr))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+
+#Splines Trend Estimation
+gam.fit = gam(nyc_v.tr~s(time.pts))
+nyc_v.tr.fit.gam = ts(fitted(gam.fit),start=2009,frequency=365)
+
+##Is there a trend? 
+ts.plot(nyc_v.tr,ylab="Number of Crimes", main = "NYC Violent Crimes - Splines")
+grid()
+lines(nyc_v.tr.fit.gam,lwd=2,col="red")
+```
+
+```{r}
+# Splines Residuals + Residuals ACF
+dif.fit.gam = nyc_v.tr - nyc_v.tr.fit.gam
+ts.plot(dif.fit.gam, ylab = "Residuals", main = "NYC Violent Crimes - Splines Residuals")
+abline(h=0, col='red')
+acf(dif.fit.gam, lag.max = 365 * 4, main = "NYC Violent Crimes - Splines Residuals - ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - ANOVA
+
+## Estimate seasonality using ANOVA approach
+model.anova = dynlm(nyc_v.tr~season(nyc_v.tr))
+#summary(model.anova)
+
+## Plot
+ts.plot(nyc_v.tr,ylab="Number of Crimes", main = "NYC Violent Crimes - ANOVA Seasonality")
+grid()
+lines(fitted(model.anova),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality ANOVA- Residuals + Resid ACF
+resid.anova <- residuals(model.anova)
+
+ts.plot(resid.anova, xlab = "", ylab = "Residual Process", main = "NYC Violent Crimes - ANOVA")
+abline(h=0, col='red')
+acf(resid.anova, lag.max = 365 * 4, main = "NYC Violent Crimes - ANOVA ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - HARMONIC
+###SUMMARY
+harmonic.1 = dynlm(nyc_v.tr~harmon(nyc_v.tr))
+summary(harmonic.1)
+
+harmonic.2 = dynlm(nyc_v.tr~harmon(nyc_v.tr,2))
+summary(harmonic.2)
+
+###use more complex model. all values stat sig at 95% conf level.
+```
+
+```{r}
+###Harmonic Plot
+## Plot
+ts.plot(nyc_v.tr,ylab="Number of Crimes", main = "NYC Violent Crimes - Harmonic Seasonality")
+grid()
+lines(fitted(harmonic.2),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality Harmonic - Residuals + Resid ACF
+
+resid.harmonic <- residuals(harmonic.2)
+
+ts.plot(resid.harmonic, xlab = "", ylab = "Residual Process", main = "NYC Violent Crimes - Harmonic")
+abline(h=0, col='red')
+acf(resid.harmonic, lag.max = 365 * 4, main = "NYC Violent Crimes - Harmonic ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + weekLY SEASONALITY
+nyc_violent$Date <- as.Date(nyc_violent$Date)
+year <- as.factor(format(nyc_violent$Date,'%Y'))
+month <- as.factor(format(nyc_violent$Date, '%b'))
+week <- as.factor(weekdays(nyc_violent$Date))
+
+gam.fit.seastr = gam(nyc_v.tr~s(time.pts)+week-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(nyc_v.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "NYC Violent Crime - Splines + Weekly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "NYC Violent Crime - Splines + Weekly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY SEASONALITY
+nyc_violent$Date <- as.Date(nyc_violent$Date)
+year <- as.factor(format(nyc_violent$Date,'%Y'))
+month <- as.factor(format(nyc_violent$Date, '%b'))
+week <- as.factor(weekdays(nyc_violent$Date))
+
+gam.fit.seastr = gam(nyc_v.tr~s(time.pts)+month-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(nyc_v.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "NYC Violent Crime - Splines + Monthly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "NYC Violent Crime - Splines + Monthly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY + WEEKLY SEASONALITY
+nyc_violent$Date <- as.Date(nyc_violent$Date)
+year <- as.factor(format(nyc_violent$Date,'%Y'))
+month <- as.factor(format(nyc_violent$Date, '%b'))
+week <- as.factor(weekdays(nyc_violent$Date))
+
+gam.fit.seastr.1 = gam(nyc_v.tr~s(time.pts)+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(nyc_v.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "NYC Violent Crime - Splines + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "NYC Violent Crime - Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + QUARTERLY + MONTHLY + WEEKLY SEASONALITY
+nyc_violent$Date <- as.Date(nyc_violent$Date)
+year <- as.factor(format(nyc_violent$Date,'%Y'))
+month <- as.factor(format(nyc_violent$Date, '%b'))
+week <- as.factor(weekdays(nyc_violent$Date))
+quarterly <- as.factor(quarter(nyc_violent$Date))
+
+gam.fit.seastr.1 = gam(nyc_v.tr~s(time.pts)+quarterly+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(nyc_v.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "NYC Violent Crime - Splines + Quarterly + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "NYC Violent Crime - Splines + Quarterly + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 1
+diff.nyc_v.tr = diff(nyc_v.tr)
+ts.plot(diff.nyc_v.tr, ylab = "Differenced Data", main = "NYC Violent Crimes - Differenced Order 1")
+abline(h=0, col='red')
+acf(diff.nyc_v.tr, lag.max = 365 * 4, main = "NYC Violent Crimes - Differenced Order 1 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 2
+diff.nyc_v.tr = diff(nyc_v.tr, differences = 2)
+ts.plot(diff.nyc_v.tr, ylab = "Differenced Data", main = "NYC Violent Crimes - Differenced Order 2")
+abline(h=0, col='red')
+acf(diff.nyc_v.tr, lag.max = 365 * 4, main = "NYC Violent Crimes - Differenced Order 2 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 7
+diff.nyc_v.tr = diff(nyc_v.tr, differences = 7)
+ts.plot(diff.nyc_v.tr, ylab = "Differenced Data", main = "NYC Violent Crimes - Differenced Order 7")
+abline(h=0, col='red')
+acf(diff.nyc_v.tr, xlim=c(0.2,4), lag.max = 365 * 4, main = "NYC Violent Crimes - Differenced Order 7 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - LAG 7
+diff.crime = diff(nyc_v.tr, 7)
+ts.plot(diff.crime, ylab = "Differenced Data", main = "NYC Violent Crimes - Differenced Lag 7")
+abline(h=0, col='red')
+acf(diff.crime, xlim=c(0.2,4),lag.max = 365 * 4, main = "NYC Violent Crimes - Differenced Lag 7 ACF")
+```
+
+## NYC Property Crime
+```{r}
+###EDA - Time Series / ACF
+ts.plot(nyc_p,ylab="Number of Crimes",main="NYC Property Crimes - Daily")
+acf(nyc_p,lag.max=365*4,main="NYC Property Crimes - ACF")
+
+ts.plot(nyc_p.tr,ylab="Number of Crimes",main="Trans NYC Prop Crimes - Daily")
+acf(nyc_p.tr,lag.max=365*4,main="Trans NYC Prop Crimes - ACF")
+```
+
+```{r}
+###TREND ESTIMATION - SPLINES
+# Convert X-Axis to 0-1 Scale
+time.pts = c(1:length(nyc_p.tr))
+time.pts = c(time.pts - min(time.pts))/max(time.pts)
+
+#Splines Trend Estimation
+gam.fit = gam(nyc_p.tr~s(time.pts))
+nyc_p.fit.gam = ts(fitted(gam.fit),start=2009,frequency=365)
+
+##Is there a trend?
+ts.plot(nyc_p.tr,ylab="Number of Crimes", main = "NYC Property Crimes - Splines")
+grid()
+lines(nyc_p.fit.gam,lwd=2,col="red")
+```
+
+```{r}
+plot(nyc_p.fit.gam, type = "l", col = "red", xlab = "Year", ylab = "Number of Crimes", ylim=c(14,23))
+lines(nyc_v.tr.fit.gam, col = "blue", type = "l")
+legend("topright", legend=c("NYC Property Spline", "NYC Violent Spline"),
+       col=c("red", "blue"), lty=c(1, 1), lwd=2)
+```
+
+```{r}
+# Splines Residuals + Residuals ACF
+dif.fit.gam = nyc_p.tr - nyc_p.fit.gam
+ts.plot(dif.fit.gam, ylab = "Residuals", main = "NYC Property Crimes - Splines Residuals")
+abline(h=0, col='red')
+acf(dif.fit.gam, lag.max = 365 * 4, main = "NYC Property Crimes - Splines Residuals - ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - ANOVA
+## Estimate seasonality using ANOVA approach
+model.anova = dynlm(nyc_p.tr~season(nyc_p.tr))
+#summary(model.anova)
+
+##Plot
+ts.plot(atl_p.tr,ylab="Number of Crimes", main = "NYC Property Crimes - ANOVA Seasonality")
+grid()
+lines(fitted(model.anova),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality ANOVA- Residuals + Resid ACF
+resid.anova <- residuals(model.anova)
+
+ts.plot(resid.anova, xlab = "", ylab = "Residual Process", main = "NYC Property Crimes - ANOVA")
+abline(h=0, col='red')
+acf(resid.anova, lag.max = 365 * 4, main = "NYC Property Crimes - ANOVA ACF")
+```
+
+```{r}
+###SEASONALITY ANALYSIS - HARMONIC
+###SUMMARY
+harmonic.1 = dynlm(nyc_p.tr~harmon(nyc_p.tr))
+summary(harmonic.1)
+
+harmonic.2 = dynlm(nyc_p.tr~harmon(nyc_p.tr,2))
+summary(harmonic.2)
+
+###keep more complex model. all results stat sig at 99% conf level
+```
+
+```{r}
+###Harmonic Plot
+## Plot
+ts.plot(nyc_p.tr,ylab="Number of Crimes", main = "NYC Property Crimes - Harmonic Seasonality")
+grid()
+lines(fitted(harmonic.2),lwd=2,col="red")
+```
+
+```{r}
+###Seasonality Harmonic - Residuals + Resid ACF
+resid.harmonic <- residuals(harmonic.2)
+
+ts.plot(resid.harmonic, xlab = "", ylab = "Residual Process", main = "NYC Property Crimes - Harmonic")
+abline(h=0, col='red')
+acf(resid.harmonic, lag.max = 365 * 4, main = "NYC Property Crimes - Harmonic ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + WEEKLY SEASONALITY
+nyc_prop$Date <- as.Date(nyc_prop$Date)
+year <- as.factor(format(nyc_prop$Date,'%Y'))
+month <- as.factor(format(nyc_prop$Date, '%b'))
+week <- as.factor(weekdays(nyc_prop$Date))
+
+gam.fit.seastr = gam(nyc_p.tr~s(time.pts)+week-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(nyc_p.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "NYC Property Crime - Splines + Weekly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "NYC Property Crime - Splines + Weekly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY SEASONALITY
+nyc_prop$Date <- as.Date(nyc_prop$Date)
+year <- as.factor(format(nyc_prop$Date,'%Y'))
+month <- as.factor(format(nyc_prop$Date, '%b'))
+week <- as.factor(weekdays(nyc_prop$Date))
+
+gam.fit.seastr = gam(nyc_p.tr~s(time.pts)+month-1)
+summary(gam.fit.seastr)
+dif.fit.seastr = ts(nyc_p.tr - fitted(gam.fit.seastr),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr, ylab = "Residuals", main = "NYC Property Crime - Splines + Monthly Seasonality")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr, lag.max = 365 * 4, main = "NYC Property Crime - Splines + Monthly Seasonality Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + MONTHLY + WEEKLY SEASONALITY
+nyc_prop$Date <- as.Date(nyc_prop$Date)
+year <- as.factor(format(nyc_prop$Date,'%Y'))
+month <- as.factor(format(nyc_prop$Date, '%b'))
+week <- as.factor(weekdays(nyc_prop$Date))
+
+gam.fit.seastr.1 = gam(nyc_p.tr~s(time.pts)+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(nyc_p.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "NYC Property Crime - Splines + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "NYC Property Crime - Splines + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###TREND + SEASONALITY - SPLINES + QUARTERLY + MONTHLY + WEEKLY SEASONALITY
+nyc_prop$Date <- as.Date(nyc_prop$Date)
+year <- as.factor(format(nyc_prop$Date,'%Y'))
+month <- as.factor(format(nyc_prop$Date, '%b'))
+week <- as.factor(weekdays(nyc_prop$Date))
+quarterly <- as.factor(quarter(nyc_prop$Date))
+
+gam.fit.seastr.1 = gam(nyc_p.tr~s(time.pts)+quarterly+month+week-1)
+summary(gam.fit.seastr.1)
+dif.fit.seastr.1 = ts(nyc_p.tr - fitted(gam.fit.seastr.1),start=2009,frequency=365)
+
+ts.plot(dif.fit.seastr.1, ylab = "Residuals", main = "ATL Property Crime - Splines + Quarterly + Monthly + weekly")
+abline(h=0, col='red')
+
+acf(dif.fit.seastr.1, lag.max = 365 * 4, main = "ATL Property Crime - Splines + Quarterly + Monthly + Weekly Resid ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 1
+diff.nyc_p.tr = diff(nyc_p.tr)
+ts.plot(diff.nyc_p.tr, ylab = "Differenced Data", main = "NYC Property Crimes - Differenced Order 1")
+abline(h=0, col='red')
+acf(diff.nyc_p.tr, lag.max = 365 * 4, main = "NYC Property Crimes - Differenced Order 1 ACF")
+### SEE HW2 - Q2 FOR EXPLANATION
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 2
+diff.nyc_p.tr = diff(nyc_p.tr, differences = 2)
+ts.plot(diff.nyc_p.tr, ylab = "Differenced Data", main = "NYC Property Crimes - Differenced Order 2")
+abline(h=0, col='red')
+acf(diff.nyc_p.tr, lag.max = 365 * 4, main = "NYC Property Crimes - Differenced Order 2 ACF")
+### SEE HW2 - Q2 FOR EXPLANATION
+```
+
+```{r}
+###DIFFERENCED DATA - ORDER 7
+diff.nyc_p.tr = diff(nyc_p.tr, differences = 7)
+ts.plot(diff.nyc_p.tr, ylab = "Differenced Data", main = "NYC Property Crimes - Differenced Order 7")
+abline(h=0, col='red')
+acf(diff.nyc_p.tr, lag.max = 365 * 4, main = "NYC Property Crimes - Differenced Order 7 ACF")
+```
+
+```{r}
+###DIFFERENCED DATA - LAG 7
+diff.nyc_p.tr = diff(nyc_p.tr, 7)
+ts.plot(diff.nyc_p.tr, ylab = "Differenced Data", main = "NYC Property Crimes - Differenced Lag 7")
+abline(h=0, col='red')
+acf(diff.nyc_p.tr, xlim=c(0.2,4), lag.max = 365 * 4, main = "NYC Property Crimes - Differenced Lag 7")
+
+###HW2 - Q2 FOR EXPLANATION
+```

@@ -1,0 +1,271 @@
+---
+title: "ISYE 6402 Project"
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r setup, include = FALSE}
+
+# Set up the default parameters
+# 1. The code block will be shown in the document
+# 2. set up figure display size
+# 3. turn off all the warnings and messages
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width = 8, fig.height = 4)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+```
+
+##Uploading the Libraries
+
+```{r}
+## Libraries used within this homework are uploaded here
+library(zoo)
+library(xts)
+library(lubridate)
+library(mgcv)
+library(lmtest)
+library(dplyr)
+library(rugarch,warn.conflicts=FALSE)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(TSA)
+library(aod)
+library(urca)
+library(forecast)
+library(tseries)
+
+```
+
+##Data Cleaning
+
+```{r}
+#importing the data
+atlanta_violent <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/atl_violent_final.csv", head = TRUE)
+nyc_violent <- read.csv("/Users/sameshbajaj/Desktop/Time Series Analysis/Assignments/Project/nyc_violent_final.csv", head = TRUE)
+
+#Cleaning the data
+
+#dates to date format
+atlanta_violent$Date<-as.Date(atlanta_violent$Date,format='%m/%d/%Y')
+nyc_violent$Date<-as.Date(nyc_violent$Date,format='%m/%d/%Y')
+atlanta_violent <- atlanta_violent %>% filter(Date >= '2009/01/01' & Date < '2021/01/01')
+nyc_violent <- nyc_violent %>% filter(Date >= '2009/01/01' & Date < '2021/01/01')
+
+#Original timeseries format
+
+Dates=atlanta_violent[,"Date"] 
+ts_atl_v=ts(atlanta_violent[,"crime.count"],start=2009/01/01, freq=365.25)
+ts_atl_v_temp=ts(atlanta_violent[,"avgTemp"],start=2009/01/01, freq=365)
+ts_atl_v_hol=ts(atlanta_violent[,"Holiday"],start=2009/01/01, freq=365)
+
+Dates=nyc_violent[,"Date"] 
+ts_nyc_v=ts(nyc_violent[,"crime.count"],start=2009/01/01, freq=365.25)
+ts_nyc_v_temp=ts(nyc_violent[,"avgTemp"],start=2009/01/01, freq=365.25)
+ts_nyc_v_hol=ts(nyc_violent[,"Holiday"],start=2009/01/01, freq=365.25)
+
+```
+
+##Applying TS & Creating Training & Testing Datasets
+
+```{r}
+
+#Timeseries plots & ACF Plots
+par(mfrow=c(2,2))
+plot(ts_atl_v, main = "TS Plot - Atlanta Property Crime/Day")
+plot(ts_atl_v_temp, main = "TS Plot - Atlanta Temperature/Day")
+acf(ts_atl_v, lag.max = 356*5, main = "ACF Plot - Atlanta Property Crime/Day")
+acf(ts_atl_v_temp, lag.max = 356*5, main = "ACF Plot - Atlanta Temperature/Day")
+
+#Dividing Data into Training and Test data sets:
+n_forward = 7
+n = length(ts_atl_v)
+nfit = n-n_forward
+
+#Training & Testing atlanta violent crime, temperature, holiday
+train_av = ts_atl_v[c(1:(nfit))]
+test_av = ts_atl_v[c((nfit+1):n)]
+train_atl_v_temp = ts_atl_v_temp[c(1:(nfit))]
+test_atl_v_temp = ts_atl_v_temp[c((nfit+1):n)]
+train_atl_v_hol = ts_atl_v_hol[c(1:(nfit))]
+test_atl_v_hol = ts_atl_v_hol[c((nfit+1):n)]
+
+#Training & Testing NYC violent crime, temperature, holiday
+train_nv = ts_nyc_v[c(1:(nfit))]
+test_nv = ts_nyc_v[c((nfit+1):n)]
+train_nyc_v_temp = ts_nyc_v_temp[c(1:(nfit))]
+test_nyc_v_temp = ts_nyc_v_temp[c((nfit+1):n)]
+train_nyc_v_hol = ts_nyc_v_hol[c(1:(nfit))]
+test_nyc_v_hol = ts_nyc_v_hol[c((nfit+1):n)]
+
+```
+
+#Fitting ARIMAX Model for Atlanta Violent Crime:
+
+```{r}
+
+# Daily TS ARIMAX (p, d, q) Fitting for Atlanta Violent Crime:
+aic.av = Inf
+av.order = c(0,0,0,0)
+for (p in 1:7) for (d in 0:1) for (q in 1:7) for(s in 0:1){
+   current.aic = AIC(arima(train_av, order=c(p, d, q), seasonal = list(order=c(0,s,0), period=7), method="ML",xreg=data.frame(train_atl_v_temp,as.factor(train_atl_v_hol))))
+   if (current.aic < aic.av) {
+     aic.av = current.aic
+     av.order = c(p, d, q,s)
+     
+   }
+ }
+
+cat("Atlanta Violent Crime ARIMAX p Order: ", av.order[1], "\nAtlanta Violent Crime ARIMAX d Order: ", av.order[2], "\nAtlanta Violent Crime ARIMAX q Order: ", av.order[3], "\nAtlanta Violent Crime ARIMAX s Order: ", av.order[4] )
+
+#ARIMA Model Fit:
+
+av.arimax = Arima(train_av, order = c(av.order[1],av.order[2],av.order[3]), seasonal = list(order=c(0,av.order[4],0), period=7), method="ML",xreg=cbind(train_atl_v_temp,as.factor(train_atl_v_hol)))
+
+coeftest(av.arimax)
+
+```
+
+#Residual Analysis - Atlanta Violent Crime:
+
+```{r}
+
+par(mfrow=c(2,2))
+plot(resid(av.arimax), ylab='Residuals',type='o',main="Residual Plot")
+abline(h=0)
+acf(resid(av.arimax),main="ACF: Residuals")
+acf((resid(av.arimax))^2,main="ACF: Squared Residuals")
+hist(resid(av.arimax),xlab='Residuals',main='Histogram: Residuals')
+qqnorm(resid(av.arimax),ylab="Sample Q",xlab="Theoretical Q")
+qqline(resid(av.arimax))
+
+Box.test(av.arimax$resid, lag = (av.order[1]+av.order[2]+av.order[3]+av.order[4]), type = "Box-Pierce", fitdf = (av.order[1]+av.order[2]+av.order[3]+av.order[4]))
+Box.test(av.arimax$resid, lag = (av.order[1]+av.order[2]+av.order[3]+av.order[4]+1), type = "Ljung-Box", fitdf = (av.order[1]+av.order[2]+av.order[3]))
+adf.test(av.arimax$resid)
+
+```
+
+#ARIMAX Forecast - Atlanta Violent Crime:
+
+```{r}
+
+for(i in 1:7){
+	df = train_av
+	if(i>1)
+		df = c(train_av, test_av[1:(i-1)*1]) 
+
+av.pred = forecast(av.arimax,n.ahead=7, xreg=cbind(test_atl_v_temp,as.factor(test_atl_v_hol)))
+}
+
+av.pred=as.data.frame(av.pred)
+point.av.pred = ts(av.pred[,1], start = 29)
+lo.av.pred = ts(av.pred[,4], start = 29)
+up.av.pred = ts(av.pred[,5], start = 29)
+part_av = ts(ts_atl_v[(n-34):n])
+ymin=min(c(part_av,lo.av.pred))
+ymax=max(c(part_av,up.av.pred))
+
+par(mfrow=c(1,1))
+plot(part_av, ylim=c(ymin,ymax), ylab="Atlanta Violent Crime", type="l",main="")
+points(point.av.pred,lwd=2,col="red")
+lines(lo.av.pred,lty=3,lwd= 2, col="blue")
+lines(up.av.pred,lty=3,lwd= 2, col="blue")
+
+```
+
+#Fitting ARIMAX Model for NYC violent crime:
+
+```{r}
+
+# Daily TS ARIMAX (p, d, q) Fitting for NYC Violent Crime:
+aic.nv = Inf
+nv.order = c(0,0,0,0)
+for (p in 1:7) for (d in 0:1) for (q in 1:7) for(s in 0:1){
+   current.aic = AIC(arima(train_nv, order=c(p, d, q), seasonal = list(order=c(0,s,0), period=7), method="ML",xreg=data.frame(train_nyc_v_temp,as.factor(train_nyc_v_hol))))
+   if (current.aic < aic.nv) {
+     aic.nv = current.aic
+     nv.order = c(p, d, q,s)
+     
+   }
+ }
+
+cat("NYC Violent Crime ARIMAX p Order: ", nv.order[1], "\nNYC Violent Crime ARIMAX d Order: ", nv.order[2], "\nNYC Violent Crime ARIMAX q Order: ", nv.order[3], "\nNYC Violent Crime ARIMAX s Order: ", nv.order[4] )
+
+#ARIMA Model Fit:
+
+nv.arimax = Arima(train_nv, order = c(nv.order[1],nv.order[2],nv.order[3]), seasonal = list(order=c(0,nv.order[4],0), period=7), method="ML",xreg=cbind(train_nyc_v_temp,as.factor(train_nyc_v_hol)))
+
+coeftest(nv.arimax)
+
+```
+
+#Residual Analysis - NYC Violent Crime:
+
+```{r}
+
+par(mfrow=c(2,2))
+plot(resid(nv.arimax), ylab='Residuals',type='o',main="Residual Plot")
+abline(h=0)
+acf(resid(nv.arimax),main="ACF: Residuals")
+acf((resid(nv.arimax))^2,main="ACF: Squared Residuals")
+hist(resid(nv.arimax),xlab='Residuals',main='Histogram: Residuals')
+qqnorm(resid(nv.arimax),ylab="Sample Q",xlab="Theoretical Q")
+qqline(resid(nv.arimax))
+
+Box.test(nv.arimax$resid, lag = (nv.order[1]+nv.order[2]+nv.order[3]+nv.order[4]), type = "Box-Pierce", fitdf = (nv.order[1]+nv.order[2]+nv.order[3]+nv.order[4]))
+Box.test(nv.arimax$resid, lag = (nv.order[1]+nv.order[2]+nv.order[3]+nv.order[4]+1), type = "Ljung-Box", fitdf = (nv.order[1]+nv.order[2]+nv.order[3]))
+adf.test(nv.arimax$resid)
+
+```
+
+#ARIMAX Forecast - NYC Violent Crime:
+
+```{r}
+
+for(i in 1:7){
+	df = train_nv
+	if(i>1)
+		df = c(train_nv, test_nv[1:(i-1)*1]) 
+
+nv.pred = forecast(nv.arimax,n.ahead=7, xreg=cbind(test_nyc_v_temp,as.factor(test_nyc_v_hol)))
+}
+
+nv.pred=as.data.frame(nv.pred)
+point.nv.pred = ts(nv.pred[,1], start = 29)
+lo.nv.pred = ts(nv.pred[,4], start = 29)
+up.nv.pred = ts(nv.pred[,5], start = 29)
+part_nv = ts(ts_nyc_v[(n-34):n])
+ymin=min(c(part_nv,lo.nv.pred))
+ymax=max(c(part_nv,up.nv.pred))
+par(mfrow=c(1,1))
+plot(part_nv, ylim=c(ymin,ymax), ylab="NYC Violent Crime", type="l",main="")
+points(point.nv.pred,lwd=2,col="red")
+lines(lo.nv.pred,lty=3,lwd= 2, col="blue")
+lines(up.nv.pred,lty=3,lwd= 2, col="blue")
+
+```
+
+#Prediction Accuracy:
+
+```{r}
+#
+mape <- function(y, y_pred) {
+  mape <- mean(abs((y-y_pred)/y))
+  return(mape)}
+
+pm <- function(obs, pred){
+  pm <- sum((pred-obs)^2)/sum((obs-mean(obs))^2)
+  return(pm)}
+
+
+atl.v.mape <- mape(test_av, point.av.pred)
+atl.v.pm <- pm(test_av, point.av.pred)
+NYC.v.mape <- mape(test_nv, point.nv.pred)
+NYC.v.pm <- pm(test_nv, point.nv.pred)
+
+cat("ATL Violent:\n\nMAPE =", atl.v.mape, "\nPM =", atl.v.pm,
+"\n\nNYC Violent:\n\nMAPE =", NYC.v.mape, "\nPM =", NYC.v.pm)
+
+```
