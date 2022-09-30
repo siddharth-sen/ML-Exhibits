@@ -1,0 +1,10 @@
+regex==2021.4.4
+tqdm==4.49.0
+seqeval==1.2.2
+nltk==3.2.4
+numpy==1.19.2
+torch==1.8.1
+transformers==4.5.0
+dataclasses==0.8
+Pillow==8.4.0
+torchvision==0.10.1

@@ -1,0 +1,13 @@
+{
+    "train_dir": "../../data/train",
+    "test_dir": "../../data/test",
+    "output_dir": "./results",
+    "num_train_epochs": 20,
+    "num_valid_tolerance": 5,
+    "learning_rate": 0.001,
+    "batch_size": 128,
+    "seed": 0,
+    "save_processed_data": true,
+    "refresh_processed_data": false,
+    "debug_mode": false
+}

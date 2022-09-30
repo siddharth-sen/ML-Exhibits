@@ -1,0 +1,23 @@
+{
+  "train_dir": "../../data/train",
+  "test_dir": "../../data/test",
+  "output_dir": "/mnt/284ac980-b350-4035-8e02-707f671ad89e/yli/homeworks/CS7641_ML/code/supervised/./results/",
+  "image_size": 512,
+  "save_processed_data": true,
+  "refresh_processed_data": false,
+  "valid_ratio": 0.2,
+  "conv_dropout": 0.25,
+  "fc_dropout": 0.15,
+  "num_train_epochs": 50,
+  "num_valid_tolerance": 5,
+  "learning_rate": 0.001,
+  "warmup_ratio": 0.2,
+  "lr_scheduler_type": "linear",
+  "weight_decay": 0.01,
+  "batch_size": 32,
+  "no_cuda": false,
+  "log_dir": "logs/image_cx.12.05.21-16.14.log",
+  "seed": 42,
+  "use_cross_validation": false,
+  "debug_mode": false
+}
